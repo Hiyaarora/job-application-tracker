@@ -86,6 +86,45 @@ def classify_email(email: dict, candidates: list[tuple[str, str]]) -> dict:
         }
 
 
+def extract_application(email: dict) -> dict:
+    """Detect whether an email is about a job the user applied to, and extract it.
+
+    Returns {is_job_application, company, role, status, confidence}. Status is
+    validated against config.STATUSES (defaults to 'Applied'). Safe defaults on
+    any parsing/model error.
+    """
+    prompt = (
+        "You read a single email and decide if it concerns a job the RECIPIENT "
+        "applied to (application confirmation, recruiter outreach about a role "
+        "they applied for, interview, rejection, or offer). Ignore generic job "
+        "alerts, newsletters, and marketing.\n\n"
+        f"Sender: {email.get('sender', '')}\n"
+        f"Subject: {email.get('subject', '')}\n"
+        f"Body:\n{email.get('body', '')[:2000]}\n\n"
+        "Respond with ONLY a JSON object: is_job_application (bool), "
+        "company (string or null), role (string or null), "
+        "status (one of: Applied, In Review, Interview Scheduled, Rejected, Offer), "
+        "confidence (0.0-1.0)."
+    )
+    try:
+        data = _extract_json(_generate(prompt))
+        status = data.get("status")
+        if status not in config.STATUSES:
+            status = "Applied"
+        return {
+            "is_job_application": bool(data.get("is_job_application", False)),
+            "company": data.get("company"),
+            "role": data.get("role"),
+            "status": status,
+            "confidence": float(data.get("confidence", 0.0)),
+        }
+    except (ValueError, json.JSONDecodeError, TypeError):
+        return {
+            "is_job_application": False, "company": None, "role": None,
+            "status": "Applied", "confidence": 0.0,
+        }
+
+
 def draft_reply(email: dict) -> str:
     """Draft a short, professional reply to an email needing a response."""
     prompt = (

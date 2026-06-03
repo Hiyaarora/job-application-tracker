@@ -40,3 +40,29 @@ def test_model_requires_api_key(monkeypatch):
     monkeypatch.setattr(config, "GEMINI_API_KEY", "")
     with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
         llm._model()
+
+
+def test_extract_application_parses_and_validates(monkeypatch):
+    monkeypatch.setattr(llm, "_generate", lambda prompt: (
+        '{"is_job_application": true, "company": "Acme", "role": "QA Engineer", '
+        '"status": "Interview Scheduled", "confidence": 0.9}'
+    ))
+    result = llm.extract_application({"sender": "jobs@acme.com", "subject": "Interview", "body": ""})
+    assert result["is_job_application"] is True
+    assert result["company"] == "Acme"
+    assert result["status"] == "Interview Scheduled"
+
+
+def test_extract_application_defaults_bad_status_to_applied(monkeypatch):
+    monkeypatch.setattr(llm, "_generate", lambda prompt: (
+        '{"is_job_application": true, "company": "Beta", "role": "SDET", '
+        '"status": "Banana", "confidence": 0.7}'
+    ))
+    result = llm.extract_application({"sender": "", "subject": "", "body": ""})
+    assert result["status"] == "Applied"
+
+
+def test_extract_application_handles_garbage(monkeypatch):
+    monkeypatch.setattr(llm, "_generate", lambda prompt: "not json")
+    result = llm.extract_application({"sender": "", "subject": "", "body": ""})
+    assert result["is_job_application"] is False

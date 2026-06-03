@@ -26,6 +26,80 @@ def _prefilter(emails: list[dict], apps) -> list[dict]:
     return kept
 
 
+# Cheap signals that an email might be about a job application. Used to narrow
+# the inbox BEFORE spending any LLM call during discovery.
+_JOB_KEYWORDS = (
+    "application", "applied", "applying", "candidate", "candidacy", "interview",
+    "recruiter", "recruiting", "talent", "position", "role", "hiring", "job",
+    "we received your", "thank you for your interest", "next steps", "assessment",
+)
+
+# Status precedence — higher index = more advanced. Used to dedup and to decide
+# whether a discovered status should overwrite an existing one.
+_RANK = {s: i for i, s in enumerate(config.STATUSES)}
+
+
+def _is_job_candidate(email: dict) -> bool:
+    haystack = " ".join([
+        email.get("subject", ""), email.get("snippet", ""), email.get("body", ""),
+    ]).lower()
+    return any(kw in haystack for kw in _JOB_KEYWORDS)
+
+
+def discover_applications(tracker, emails, extractor, min_confidence: float = 0.6,
+                          max_llm: int = 15, log_fn=None) -> dict:
+    """Scan emails, extract job applications, and populate the tracker.
+
+    Keyword-filters first (no LLM), caps LLM calls at `max_llm`, dedups by
+    company+role keeping the most-advanced status, then adds new applications
+    and bumps existing ones. Returns {added, updated, skipped_quota}.
+    """
+    if log_fn is None:
+        log_fn = _log_change
+
+    candidates = [e for e in emails if _is_job_candidate(e)]
+    to_scan = candidates[:max_llm]
+    skipped_quota = len(candidates) - len(to_scan)
+
+    # Collapse multiple emails for the same application to its furthest status.
+    discovered: dict[tuple[str, str], dict] = {}
+    error = None
+    for email in to_scan:
+        try:
+            r = extractor(email)
+        except Exception as exc:  # quota/rate/network — stop hammering, keep work so far
+            error = str(exc)
+            break
+        if not r.get("is_job_application") or r.get("confidence", 0.0) < min_confidence:
+            continue
+        company, role = r.get("company"), r.get("role")
+        if not company:
+            continue
+        role = role or "(unknown)"
+        status = r.get("status", "Applied")
+        key = (company.lower(), role.lower())
+        if key not in discovered or _RANK.get(status, 0) > _RANK.get(discovered[key]["status"], 0):
+            discovered[key] = {"company": company, "role": role, "status": status}
+
+    added, updated = [], []
+    for info in discovered.values():
+        company, role, status = info["company"], info["role"], info["status"]
+        existing = tracker.find_application(company, role)
+        if existing is None:
+            tracker.add_application(company, role, source="Email")
+            if status != "Applied":
+                tracker.update_status(company, role, status, note="discovered from email")
+            added.append(f"{company} / {role} [{status}]")
+            log_fn(f"discovered {company} / {role} -> {status}")
+        elif _RANK.get(status, 0) > _RANK.get(existing.status, 0):
+            tracker.update_status(company, role, status, note="discovered from email")
+            updated.append(f"{company} / {role}: {existing.status} -> {status}")
+            log_fn(f"discovered update {company} / {role} -> {status}")
+
+    return {"added": added, "updated": updated,
+            "skipped_quota": skipped_quota, "error": error}
+
+
 def _log_change(message: str) -> None:
     """Append a timestamped line to the changes log."""
     config.ensure_app_dir()
@@ -45,7 +119,10 @@ def sync_inbox(tracker, emails, classifier, min_confidence: float = 0.6,
     changes: list[str] = []
 
     for email in _prefilter(emails, apps):
-        result = classifier(email, candidates)
+        try:
+            result = classifier(email, candidates)
+        except Exception:  # quota/rate/network — stop, keep changes already made
+            break
         new_status = result.get("new_status")
         company = result.get("matched_company")
         role = result.get("matched_role")
