@@ -40,6 +40,22 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def get_or_create_sheet(service, spreadsheet_id: str) -> str:
+    """Return an existing spreadsheet id, or create a new sheet with headers."""
+    if spreadsheet_id:
+        return spreadsheet_id
+    created = (service.spreadsheets().create(body={
+        "properties": {"title": "Job Search Tracker"},
+        "sheets": [{"properties": {"title": config.SHEET_TAB}}],
+    }).execute())
+    sid = created["spreadsheetId"]
+    (service.spreadsheets().values()
+     .update(spreadsheetId=sid, range=f"{config.SHEET_TAB}!A1:G1",
+             valueInputOption="RAW", body={"values": [config.SHEET_HEADERS]})
+     .execute())
+    return sid
+
+
 class SheetsTracker(Tracker):
     """Tracker backed by a Google Sheet. One row per application."""
 
