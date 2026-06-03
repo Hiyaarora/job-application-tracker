@@ -2,7 +2,7 @@
 import argparse
 from pathlib import Path
 
-from . import auth, config, setup
+from . import agent, auth, config, gmail_client, llm, setup
 from .dates import parse_since
 from .tracker import SheetsTracker, get_or_create_sheet
 
@@ -45,6 +45,21 @@ def cmd_list(args):
         print(f"{a.date_applied}  {a.company:20} {a.role:25} {a.status:20} {a.notes}")
 
 
+def cmd_sync(args):
+    gmail = auth.gmail_service()
+    tracker = _tracker()
+    refs = gmail_client.list_recent(gmail, days=args.days, max_results=args.max)
+    print(f"Fetched {len(refs)} email(s) from the last {args.days} day(s); scanning...")
+    emails = [gmail_client.parse_message(gmail_client.get_message(gmail, r["id"])) for r in refs]
+    changes = agent.sync_inbox(tracker, emails, llm.classify_email)
+    if not changes:
+        print("No status changes.")
+    else:
+        print(f"Updated {len(changes)} application(s):")
+        for c in changes:
+            print(f"  • {c}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jobagent", description="AI Job Search Agent")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -63,6 +78,11 @@ def build_parser() -> argparse.ArgumentParser:
     l.add_argument("--since", help="e.g. 30d, 2w")
     l.add_argument("--status", choices=config.STATUSES)
     l.set_defaults(func=cmd_list)
+
+    s = sub.add_parser("sync", help="Scan recent Gmail and auto-update statuses")
+    s.add_argument("--days", type=int, default=2, help="How many days back to scan (default 2)")
+    s.add_argument("--max", type=int, default=50, help="Max emails to fetch (default 50)")
+    s.set_defaults(func=cmd_sync)
 
     return parser
 
