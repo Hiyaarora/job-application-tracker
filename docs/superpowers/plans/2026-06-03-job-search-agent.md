@@ -863,6 +863,10 @@ git commit -m "feat(cli): add and list commands with --since/--status"
 
 ## Phase 3: Gmail Reading + Classify
 
+> **Decision (confirmed):** `sync` scans ALL recent emails (not just unread) from
+> the last **2 days** by default (`newer_than:2d`), capped at `--max` fetched
+> messages. The Python pre-filter runs before any LLM call.
+
 ### Task 8: `gmail_client.py`
 
 **Files:**
