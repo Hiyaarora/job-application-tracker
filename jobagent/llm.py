@@ -5,6 +5,7 @@ All model access goes through _model()/_generate() so tests can patch them.
 """
 import json
 import re
+import time
 
 import google.generativeai as genai
 
@@ -33,9 +34,27 @@ def _model():
     return genai.GenerativeModel(config.GEMINI_MODEL)
 
 
+def _is_quota_error(exc: Exception) -> bool:
+    """True for rate-limit / quota (HTTP 429) errors from the Gemini API."""
+    text = str(exc).lower()
+    return "429" in text or "quota" in text or "resourceexhausted" in text
+
+
+def _call_with_retry(fn, *, max_retries: int = 5, sleep_fn=time.sleep,
+                     base_delay: float = 40.0):
+    """Call fn(); on a quota/rate error wait and retry (free tier = ~5 req/min)."""
+    for attempt in range(max_retries + 1):
+        try:
+            return fn()
+        except Exception as exc:
+            if not _is_quota_error(exc) or attempt == max_retries:
+                raise
+            sleep_fn(base_delay)
+
+
 def _generate(prompt: str) -> str:
-    """Send a prompt to Gemini and return the raw text response."""
-    return _model().generate_content(prompt).text
+    """Send a prompt to Gemini and return the raw text, retrying on rate limits."""
+    return _call_with_retry(lambda: _model().generate_content(prompt).text)
 
 
 def _extract_json(text: str) -> dict:

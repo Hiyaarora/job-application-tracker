@@ -66,3 +66,51 @@ def test_extract_application_handles_garbage(monkeypatch):
     monkeypatch.setattr(llm, "_generate", lambda prompt: "not json")
     result = llm.extract_application({"sender": "", "subject": "", "body": ""})
     assert result["is_job_application"] is False
+
+
+def test_is_quota_error_detects_429():
+    assert llm._is_quota_error(Exception("429 You exceeded your current quota")) is True
+    assert llm._is_quota_error(Exception("Quota exceeded for metric")) is True
+    assert llm._is_quota_error(ValueError("bad json")) is False
+
+
+def test_call_with_retry_retries_on_quota_then_succeeds():
+    attempts = {"n": 0}
+    slept = []
+
+    def fn():
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise Exception("429 quota exceeded")
+        return "ok"
+
+    result = llm._call_with_retry(fn, max_retries=3, sleep_fn=slept.append, base_delay=40)
+    assert result == "ok"
+    assert attempts["n"] == 3
+    assert slept == [40, 40]   # slept before each of the 2 retries
+
+
+def test_call_with_retry_gives_up_after_max():
+    def fn():
+        raise Exception("429 quota exceeded")
+
+    slept = []
+    try:
+        llm._call_with_retry(fn, max_retries=2, sleep_fn=slept.append, base_delay=40)
+        assert False, "should have raised"
+    except Exception as e:
+        assert "quota" in str(e).lower()
+    assert len(slept) == 2
+
+
+def test_call_with_retry_reraises_non_quota_immediately():
+    def fn():
+        raise ValueError("some other error")
+
+    slept = []
+    try:
+        llm._call_with_retry(fn, max_retries=3, sleep_fn=slept.append)
+        assert False
+    except ValueError:
+        pass
+    assert slept == []   # no retry for non-quota errors
