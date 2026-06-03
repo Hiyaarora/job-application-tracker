@@ -1,9 +1,13 @@
 """Command-line interface for the Job Search Agent."""
 import argparse
+from pathlib import Path
 
-from . import auth, config
+from . import auth, config, setup
 from .dates import parse_since
 from .tracker import SheetsTracker, get_or_create_sheet
+
+# Project root = the folder containing main.py (one level above this package).
+PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 
 def _tracker() -> SheetsTracker:
@@ -13,6 +17,10 @@ def _tracker() -> SheetsTracker:
     if sid != config.SPREADSHEET_ID:
         print(f"Created a new sheet. Add this to your .env:\n  SPREADSHEET_ID={sid}")
     return SheetsTracker(service, sid)
+
+
+def cmd_setup(args):
+    setup.run_setup(PROJECT_DIR)
 
 
 def cmd_login(args):
@@ -41,6 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jobagent", description="AI Job Search Agent")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    sub.add_parser("setup", help="Guided first-time setup (opens Google pages)").set_defaults(func=cmd_setup)
     sub.add_parser("login", help="Authenticate with Google").set_defaults(func=cmd_login)
 
     a = sub.add_parser("add", help="Add an application")

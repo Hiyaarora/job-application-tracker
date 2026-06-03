@@ -357,6 +357,24 @@ git add jobagent/cli.py
 git commit -m "feat(cli): login command"
 ```
 
+### Task 3b: `setup.py` — guided setup wizard (added on request)
+
+**Files:**
+- Create: `jobagent/setup.py`, `tests/test_setup.py`, `tests/test_setup_flow.py`
+- Modify: `jobagent/cli.py` (add `setup` command)
+
+A `python main.py setup` wizard that opens each Google Cloud / AI Studio page in
+the browser, waits at every step, verifies `client_secret.json` landed, creates
+`.env` from the template, optionally captures the Gemini key, and finishes by
+running `login`. Pure helpers (`ensure_env_file`, `set_env_var`) are TDD'd; the
+interactive `run_setup()` takes injectable `opener`/`prompt`/`out` so the flow is
+testable without a real browser or stdin.
+
+- [ ] Tests for `ensure_env_file`, `set_env_var`, and a flow test asserting the
+  right URLs are opened and `.env` is created.
+- [ ] Implement `setup.py`; wire `cmd_setup` + `setup` subcommand in `cli.py`.
+- [ ] Commit `feat(setup): guided browser-based setup wizard`.
+
 ---
 
 ## Phase 2: Sheets Tracker
