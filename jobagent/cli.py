@@ -109,16 +109,12 @@ def cmd_discover(args):
 
 
 def cmd_update(args):
-    """Daily workhorse: discover new applications (wide window, seen-tracked),
-    then sync statuses (narrow window so we don't re-read old mail)."""
+    """Daily workhorse: a single, memory-tracked scan that both adds new
+    applications and advances existing statuses. Each email is read by the LLM
+    at most once ever (seen.json), so repeated daily runs cost almost nothing."""
     if not _require_gemini():
         return
-    gmail = auth.gmail_service()
-    tracker = _tracker()
-    print("== Discovering new applications ==")
-    run_discover(gmail, tracker, args.days, args.max, args.max_llm)
-    print("== Updating statuses ==")
-    run_sync(gmail, tracker, min(args.days, 3), args.max)
+    run_discover(auth.gmail_service(), _tracker(), args.days, args.max, args.max_llm)
 
 
 def cmd_schedule(args):
@@ -156,7 +152,7 @@ def build_parser() -> argparse.ArgumentParser:
     l.add_argument("--status", choices=config.STATUSES)
     l.set_defaults(func=cmd_list)
 
-    s = sub.add_parser("sync", help="Scan recent Gmail and auto-update statuses")
+    s = sub.add_parser("sync", help="(Optional/thorough) re-classify recent mail for status changes; uses more quota")
     s.add_argument("--days", type=int, default=2, help="How many days back to scan (default 2)")
     s.add_argument("--max", type=int, default=50, help="Max emails to fetch (default 50)")
     s.set_defaults(func=cmd_sync)

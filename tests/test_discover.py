@@ -106,6 +106,23 @@ def test_discover_marks_scanned_emails_as_seen():
     assert "1" in seen                 # scanned id recorded so future runs skip it
 
 
+def test_discover_skips_otp_noise_without_llm_call():
+    t = FakeTracker()
+    emails = [_email("1", subject="Your verification code is 123456",
+                     body="one-time code for your application")]
+    calls = []
+
+    def extractor(e):
+        calls.append(e["id"])
+        return {"is_job_application": True, "company": "X", "role": "Y",
+                "status": "Applied", "confidence": 0.9}
+
+    agent.discover_applications(t, emails, extractor, apply_keyword_filter=False,
+                                log_fn=lambda _m: None)
+    assert calls == []            # OTP email never reached the LLM
+    assert t.get_applications() == []
+
+
 def test_discover_merges_three_company_emails_into_one_row():
     # GitLab: OTP (no role), confirmation (Applied), rejection (Rejected).
     t = FakeTracker()

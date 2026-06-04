@@ -75,6 +75,20 @@ def _is_job_candidate(email: dict) -> bool:
     return any(kw in haystack for kw in _JOB_KEYWORDS)
 
 
+# Verification / OTP / login mails: cost an LLM call but carry no status. Skip
+# them cheaply so we never waste a Gemini request on them.
+_NOISE_PATTERNS = (
+    "verification code", "one-time", "otp", "confirm your email",
+    "verify your email", "security code", "sign-in code", "login code",
+    "log in code", "2-step", "two-factor",
+)
+
+
+def _is_noise(email: dict) -> bool:
+    hay = (email.get("subject", "") + " " + email.get("snippet", "")).lower()
+    return any(p in hay for p in _NOISE_PATTERNS)
+
+
 def discover_applications(tracker, emails, extractor, min_confidence: float = 0.6,
                           max_llm: int = 15, log_fn=None, seen: set | None = None,
                           apply_keyword_filter: bool = True) -> dict:
@@ -93,6 +107,7 @@ def discover_applications(tracker, emails, extractor, min_confidence: float = 0.
 
     candidates = [e for e in emails
                   if (not apply_keyword_filter or _is_job_candidate(e))
+                  and not _is_noise(e)
                   and e.get("id") not in seen]
     to_scan = candidates[:max_llm]
     skipped_quota = len(candidates) - len(to_scan)
