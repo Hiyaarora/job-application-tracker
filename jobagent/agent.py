@@ -3,9 +3,26 @@
 Everything is injectable (classifier, log_fn, emails) so the logic is testable
 without network or quota.
 """
+import json
 from datetime import datetime, timezone
 
 from . import config
+
+
+def load_seen() -> set:
+    """Load the set of already-scanned email ids (empty if none yet)."""
+    if not config.SEEN_FILE.exists():
+        return set()
+    try:
+        return set(json.loads(config.SEEN_FILE.read_text()))
+    except (ValueError, OSError):
+        return set()
+
+
+def save_seen(seen: set) -> None:
+    """Persist the set of scanned email ids."""
+    config.ensure_app_dir()
+    config.SEEN_FILE.write_text(json.dumps(sorted(seen)))
 
 
 def _prefilter(emails: list[dict], apps) -> list[dict]:
@@ -47,17 +64,22 @@ def _is_job_candidate(email: dict) -> bool:
 
 
 def discover_applications(tracker, emails, extractor, min_confidence: float = 0.6,
-                          max_llm: int = 15, log_fn=None) -> dict:
+                          max_llm: int = 15, log_fn=None, seen: set | None = None) -> dict:
     """Scan emails, extract job applications, and populate the tracker.
 
-    Keyword-filters first (no LLM), caps LLM calls at `max_llm`, dedups by
-    company+role keeping the most-advanced status, then adds new applications
-    and bumps existing ones. Returns {added, updated, skipped_quota}.
+    Keyword-filters first (no LLM), skips emails already in `seen`, caps LLM
+    calls at `max_llm`, dedups by company+role keeping the most-advanced status,
+    then adds new applications and bumps existing ones. Successfully scanned
+    email ids are added to `seen` so later runs work through the backlog.
+    Returns {added, updated, skipped_quota, error}.
     """
     if log_fn is None:
         log_fn = _log_change
+    if seen is None:
+        seen = set()
 
-    candidates = [e for e in emails if _is_job_candidate(e)]
+    candidates = [e for e in emails
+                  if _is_job_candidate(e) and e.get("id") not in seen]
     to_scan = candidates[:max_llm]
     skipped_quota = len(candidates) - len(to_scan)
 
@@ -70,6 +92,7 @@ def discover_applications(tracker, emails, extractor, min_confidence: float = 0.
         except Exception as exc:  # quota/rate/network — stop hammering, keep work so far
             error = str(exc)
             break
+        seen.add(email.get("id"))  # mark only after a successful scan
         if not r.get("is_job_application") or r.get("confidence", 0.0) < min_confidence:
             continue
         company, role = r.get("company"), r.get("role")

@@ -58,6 +58,36 @@ def test_discover_dedup_keeps_most_advanced_status():
     assert len(summary["added"]) == 1
 
 
+def test_discover_skips_already_seen_emails():
+    t = FakeTracker()
+    emails = [_email("1", subject="job interview", body="role at acme")]
+    calls = []
+
+    def extractor(e):
+        calls.append(e["id"])
+        return {"is_job_application": True, "company": "Acme", "role": "QA",
+                "status": "Applied", "confidence": 0.9}
+
+    seen = {"1"}
+    summary = agent.discover_applications(t, emails, extractor, seen=seen,
+                                          log_fn=lambda _m: None)
+    assert calls == []                 # already-seen email not re-scanned
+    assert summary["added"] == []
+
+
+def test_discover_marks_scanned_emails_as_seen():
+    t = FakeTracker()
+    emails = [_email("1", subject="job interview", body="role at acme")]
+
+    def extractor(e):
+        return {"is_job_application": True, "company": "Acme", "role": "QA",
+                "status": "Applied", "confidence": 0.9}
+
+    seen = set()
+    agent.discover_applications(t, emails, extractor, seen=seen, log_fn=lambda _m: None)
+    assert "1" in seen                 # scanned id recorded so future runs skip it
+
+
 def test_discover_respects_max_llm_cap():
     t = FakeTracker()
     emails = [_email(str(i), subject="job application interview", body="role") for i in range(5)]

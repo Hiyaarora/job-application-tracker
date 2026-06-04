@@ -80,8 +80,10 @@ def cmd_discover(args):
     print(f"Fetched {len(refs)} email(s) from the last {args.days} day(s); "
           f"finding job applications (up to {args.max_llm} AI scans)...")
     emails = [gmail_client.parse_message(gmail_client.get_message(gmail, r["id"])) for r in refs]
+    seen = agent.load_seen()
     summary = agent.discover_applications(tracker, emails, llm.extract_application,
-                                          max_llm=args.max_llm)
+                                          max_llm=args.max_llm, seen=seen)
+    agent.save_seen(seen)
     for a in summary["added"]:
         print(f"  + added   {a}")
     for u in summary["updated"]:

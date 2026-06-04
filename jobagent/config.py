@@ -30,6 +30,7 @@ APP_DIR = Path(os.path.expanduser("~")) / ".jobagent"
 KEY_FILE = APP_DIR / "key"           # Fernet key, 0600
 TOKEN_FILE = APP_DIR / "token.enc"   # encrypted OAuth credentials
 CHANGES_LOG = APP_DIR / "changes.log"
+SEEN_FILE = APP_DIR / "seen.json"    # ids of emails already scanned by discover
 
 # From .env
 CLIENT_SECRETS_FILE = os.getenv("GOOGLE_CLIENT_SECRETS_FILE", "client_secret.json")
