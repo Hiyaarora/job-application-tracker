@@ -2,7 +2,7 @@
 import argparse
 from pathlib import Path
 
-from . import agent, auth, config, gmail_client, llm, setup
+from . import agent, auth, config, gmail_client, llm, scheduler, setup
 from .dates import parse_since
 from .tracker import SheetsTracker, get_or_create_sheet
 
@@ -54,36 +54,19 @@ def _require_gemini() -> bool:
     return True
 
 
-def cmd_sync(args):
-    if not _require_gemini():
-        return
-    gmail = auth.gmail_service()
-    tracker = _tracker()
-    refs = gmail_client.list_recent(gmail, days=args.days, max_results=args.max)
-    print(f"Fetched {len(refs)} email(s) from the last {args.days} day(s); scanning...")
-    emails = [gmail_client.parse_message(gmail_client.get_message(gmail, r["id"])) for r in refs]
-    changes = agent.sync_inbox(tracker, emails, llm.classify_email)
-    if not changes:
-        print("No status changes.")
-    else:
-        print(f"Updated {len(changes)} application(s):")
-        for c in changes:
-            print(f"  • {c}")
+def _fetch(gmail, days, max_results, query=None):
+    refs = gmail_client.list_recent(gmail, days=days, max_results=max_results, query=query)
+    return refs, [gmail_client.parse_message(gmail_client.get_message(gmail, r["id"])) for r in refs]
 
 
-def cmd_discover(args):
-    if not _require_gemini():
-        return
-    gmail = auth.gmail_service()
-    tracker = _tracker()
-    refs = gmail_client.list_recent(gmail, days=args.days, max_results=args.max,
-                                    query=config.APPLICATION_QUERY)
-    print(f"Found {len(refs)} likely application email(s) in the last {args.days} day(s); "
-          f"reading up to {args.max_llm} with AI...")
-    emails = [gmail_client.parse_message(gmail_client.get_message(gmail, r["id"])) for r in refs]
+def run_discover(gmail, tracker, days: int, max_fetch: int, max_llm: int) -> None:
+    """Find new applications in Gmail and add them to the tracker."""
+    refs, emails = _fetch(gmail, days, max_fetch, query=config.APPLICATION_QUERY)
+    print(f"Found {len(refs)} likely application email(s) in the last {days} day(s); "
+          f"reading up to {max_llm} with AI...")
     seen = agent.load_seen()
     summary = agent.discover_applications(tracker, emails, llm.extract_application,
-                                          max_llm=args.max_llm, seen=seen,
+                                          max_llm=max_llm, seen=seen,
                                           apply_keyword_filter=False)
     agent.save_seen(seen)
     for a in summary["added"]:
@@ -93,11 +76,64 @@ def cmd_discover(args):
     if not summary["added"] and not summary["updated"]:
         print("No new applications found.")
     if summary["skipped_quota"]:
-        print(f"Note: {summary['skipped_quota']} likely-job email(s) were not scanned "
-              f"to stay under the Gemini free quota. Re-run later or raise --max-llm.")
+        print(f"Note: {summary['skipped_quota']} application email(s) were not scanned "
+              f"to stay under the Gemini free quota. They'll be picked up on the next run.")
     if summary.get("error"):
-        print(f"Stopped early (likely hit the Gemini free quota): {summary['error']}")
-        print("Anything found above is already saved. Try again tomorrow or with a smaller --max-llm.")
+        print(f"Stopped early (likely hit the Gemini daily free quota): {summary['error']}")
+        print("Anything found above is already saved. The rest continues tomorrow.")
+
+
+def run_sync(gmail, tracker, days: int, max_fetch: int) -> None:
+    """Scan recent Gmail and update statuses of already-tracked applications."""
+    refs, emails = _fetch(gmail, days, max_fetch)
+    print(f"Scanning {len(refs)} recent email(s) for status updates...")
+    changes = agent.sync_inbox(tracker, emails, llm.classify_email)
+    if not changes:
+        print("No status changes.")
+    else:
+        print(f"Updated {len(changes)} application(s):")
+        for c in changes:
+            print(f"  • {c}")
+
+
+def cmd_sync(args):
+    if not _require_gemini():
+        return
+    run_sync(auth.gmail_service(), _tracker(), args.days, args.max)
+
+
+def cmd_discover(args):
+    if not _require_gemini():
+        return
+    run_discover(auth.gmail_service(), _tracker(), args.days, args.max, args.max_llm)
+
+
+def cmd_update(args):
+    """Daily workhorse: discover new applications, then sync statuses."""
+    if not _require_gemini():
+        return
+    gmail = auth.gmail_service()
+    tracker = _tracker()
+    print("== Discovering new applications ==")
+    run_discover(gmail, tracker, args.days, args.max, args.max_llm)
+    print("== Updating statuses ==")
+    run_sync(gmail, tracker, args.days, args.max)
+
+
+def cmd_schedule(args):
+    if args.uninstall:
+        removed = scheduler.uninstall()
+        print("Removed the daily job." if removed else "No daily job was installed.")
+        return
+    try:
+        path = scheduler.install(PROJECT_DIR, args.at)
+    except Exception as exc:
+        print(f"Could not install the daily job: {exc}")
+        return
+    print(f"Installed daily job at {args.at}. It runs `update` automatically each day.")
+    print(f"  Logs:   {scheduler.LOG_PATH}")
+    print(f"  Config: {path}")
+    print("Remove anytime with:  python main.py schedule --uninstall")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -130,6 +166,18 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--max-llm", type=int, default=15, dest="max_llm",
                    help="Max emails to scan with Gemini, protects the free quota (default 15)")
     d.set_defaults(func=cmd_discover)
+
+    u = sub.add_parser("update", help="Daily: discover new applications + update statuses")
+    u.add_argument("--days", type=int, default=2, help="How many days back to scan (default 2)")
+    u.add_argument("--max", type=int, default=40, help="Max emails to fetch (default 40)")
+    u.add_argument("--max-llm", type=int, default=15, dest="max_llm",
+                   help="Max emails to scan with Gemini (default 15)")
+    u.set_defaults(func=cmd_update)
+
+    sched = sub.add_parser("schedule", help="Install/remove the automatic daily run (macOS)")
+    sched.add_argument("--at", default="09:00", help="Daily run time, HH:MM (default 09:00)")
+    sched.add_argument("--uninstall", action="store_true", help="Remove the daily job")
+    sched.set_defaults(func=cmd_schedule)
 
     return parser
 
