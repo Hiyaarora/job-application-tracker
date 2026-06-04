@@ -11,10 +11,18 @@ from email.mime.text import MIMEText
 _RETRIES = 3
 
 
-def list_recent(service, days: int = 2, max_results: int = 100) -> list[dict]:
-    """Return [{id, threadId}, ...] for ALL messages from the last `days` days."""
+def list_recent(service, days: int = 2, max_results: int = 100,
+                query: str | None = None) -> list[dict]:
+    """Return [{id, threadId}, ...] for messages from the last `days` days.
+
+    Pass `query` to AND an extra Gmail search expression (e.g. an application
+    filter) onto the date window, so Gmail narrows results before we fetch them.
+    """
+    q = f"newer_than:{days}d"
+    if query:
+        q += f" ({query})"
     resp = (service.users().messages()
-            .list(userId="me", q=f"newer_than:{days}d", maxResults=max_results)
+            .list(userId="me", q=q, maxResults=max_results)
             .execute(num_retries=_RETRIES))
     return resp.get("messages", [])
 

@@ -76,13 +76,15 @@ def cmd_discover(args):
         return
     gmail = auth.gmail_service()
     tracker = _tracker()
-    refs = gmail_client.list_recent(gmail, days=args.days, max_results=args.max)
-    print(f"Fetched {len(refs)} email(s) from the last {args.days} day(s); "
-          f"finding job applications (up to {args.max_llm} AI scans)...")
+    refs = gmail_client.list_recent(gmail, days=args.days, max_results=args.max,
+                                    query=config.APPLICATION_QUERY)
+    print(f"Found {len(refs)} likely application email(s) in the last {args.days} day(s); "
+          f"reading up to {args.max_llm} with AI...")
     emails = [gmail_client.parse_message(gmail_client.get_message(gmail, r["id"])) for r in refs]
     seen = agent.load_seen()
     summary = agent.discover_applications(tracker, emails, llm.extract_application,
-                                          max_llm=args.max_llm, seen=seen)
+                                          max_llm=args.max_llm, seen=seen,
+                                          apply_keyword_filter=False)
     agent.save_seen(seen)
     for a in summary["added"]:
         print(f"  + added   {a}")

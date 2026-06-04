@@ -21,6 +21,15 @@ def test_list_recent_uses_newer_than_query():
     assert kwargs["maxResults"] == 50
 
 
+def test_list_recent_appends_query():
+    service = MagicMock()
+    msgs = service.users.return_value.messages.return_value
+    msgs.list.return_value.execute.return_value = {"messages": []}
+    gmail_client.list_recent(service, days=7, query="from:greenhouse.io")
+    _, kwargs = msgs.list.call_args
+    assert kwargs["q"] == "newer_than:7d (from:greenhouse.io)"
+
+
 def test_list_recent_handles_no_messages():
     service = MagicMock()
     service.users.return_value.messages.return_value.list.return_value.execute.return_value = {}

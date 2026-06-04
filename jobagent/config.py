@@ -25,6 +25,20 @@ SHEET_HEADERS = [
 ]
 SHEET_TAB = "Applications"
 
+# A precise Gmail search for real application emails — known recruiting systems
+# (ATS) plus strong subject phrases. Used by `discover` so we spend scarce LLM
+# calls only on high-signal mail instead of the whole inbox.
+APPLICATION_QUERY = (
+    "from:greenhouse.io OR from:greenhouse-mail.io OR from:hire.lever.co OR "
+    "from:myworkday.com OR from:ashbyhq.com OR from:smartrecruiters.com OR "
+    "from:icims.com OR from:jobvite.com OR from:bamboohr.com OR from:wellfound.com OR "
+    "from:rippling.com OR from:workable.com OR from:recruitee.com OR from:turbohire.co OR "
+    'subject:"your application" OR subject:"thank you for applying" OR '
+    'subject:"application received" OR subject:"we received your application" OR '
+    'subject:"application to" OR subject:"applying to" OR subject:"application for" OR '
+    'subject:"application with" OR subject:"application confirmation"'
+)
+
 # Where we keep secrets/state (created on demand, 0700).
 APP_DIR = Path(os.path.expanduser("~")) / ".jobagent"
 KEY_FILE = APP_DIR / "key"           # Fernet key, 0600

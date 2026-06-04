@@ -58,6 +58,24 @@ def test_discover_dedup_keeps_most_advanced_status():
     assert len(summary["added"]) == 1
 
 
+def test_discover_without_keyword_filter_scans_all():
+    # When Gmail already filtered (apply_keyword_filter=False), even an email
+    # with no job keywords in its text should be scanned.
+    t = FakeTracker()
+    emails = [_email("1", subject="Postmanaut welcome", body="we're delighted")]
+    calls = []
+
+    def extractor(e):
+        calls.append(e["id"])
+        return {"is_job_application": True, "company": "Postman", "role": "SE",
+                "status": "Applied", "confidence": 0.9}
+
+    agent.discover_applications(t, emails, extractor, apply_keyword_filter=False,
+                                log_fn=lambda _m: None)
+    assert calls == ["1"]
+    assert t.find_application("Postman", "SE") is not None
+
+
 def test_discover_skips_already_seen_emails():
     t = FakeTracker()
     emails = [_email("1", subject="job interview", body="role at acme")]

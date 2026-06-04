@@ -43,12 +43,14 @@ def _prefilter(emails: list[dict], apps) -> list[dict]:
     return kept
 
 
-# Cheap signals that an email might be about a job application. Used to narrow
-# the inbox BEFORE spending any LLM call during discovery.
+# High-signal phrases that an email is about a real application (not a job
+# alert/newsletter). Deliberately avoids common words like "role"/"job" that
+# match everything. Used as a fallback filter; `discover` normally relies on a
+# precise Gmail search instead (config.APPLICATION_QUERY).
 _JOB_KEYWORDS = (
-    "application", "applied", "applying", "candidate", "candidacy", "interview",
-    "recruiter", "recruiting", "talent", "position", "role", "hiring", "job",
-    "we received your", "thank you for your interest", "next steps", "assessment",
+    "application", "applied", "applying", "candidacy", "interview", "recruiter",
+    "we received your", "thank you for your interest", "thank you for applying",
+    "your application", "next steps", "assessment", "submission",
 )
 
 # Status precedence — higher index = more advanced. Used to dedup and to decide
@@ -64,7 +66,8 @@ def _is_job_candidate(email: dict) -> bool:
 
 
 def discover_applications(tracker, emails, extractor, min_confidence: float = 0.6,
-                          max_llm: int = 15, log_fn=None, seen: set | None = None) -> dict:
+                          max_llm: int = 15, log_fn=None, seen: set | None = None,
+                          apply_keyword_filter: bool = True) -> dict:
     """Scan emails, extract job applications, and populate the tracker.
 
     Keyword-filters first (no LLM), skips emails already in `seen`, caps LLM
@@ -79,7 +82,8 @@ def discover_applications(tracker, emails, extractor, min_confidence: float = 0.
         seen = set()
 
     candidates = [e for e in emails
-                  if _is_job_candidate(e) and e.get("id") not in seen]
+                  if (not apply_keyword_filter or _is_job_candidate(e))
+                  and e.get("id") not in seen]
     to_scan = candidates[:max_llm]
     skipped_quota = len(candidates) - len(to_scan)
 
