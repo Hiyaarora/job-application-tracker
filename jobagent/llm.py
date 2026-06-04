@@ -149,16 +149,32 @@ def extract_application(email: dict) -> dict:
         }
 
 
-def draft_reply(email: dict) -> str:
-    """Draft a short, professional reply to an email needing a response."""
+def propose_reply(email: dict) -> dict:
+    """In ONE call, decide if an email needs a personal reply and draft it.
+
+    Combining the decision and the draft keeps it to a single Gemini request per
+    email. Returns {needs_reply: bool, draft: str}; safe defaults on any error.
+    """
     prompt = (
-        "Draft a concise, professional reply to this job-search email. "
-        "Be warm, specific, and keep it under 150 words. Return ONLY the reply body.\n\n"
+        "You triage a job-search email. Decide if it needs a PERSONAL reply from "
+        "the applicant — e.g. an interview invite to confirm/schedule, or a "
+        "recruiter question. Rejections, automated confirmations, and newsletters "
+        "do NOT need a reply.\n"
+        "If it does, draft a concise, warm, professional reply under 150 words.\n\n"
         f"From: {email.get('sender', '')}\n"
         f"Subject: {email.get('subject', '')}\n"
-        f"Body:\n{email.get('body', '')[:2000]}"
+        f"Body:\n{email.get('body', '')[:2000]}\n\n"
+        'Respond with ONLY JSON: {"needs_reply": bool, "draft": string}. '
+        'If no reply is needed, draft must be "".'
     )
-    return _generate(prompt).strip()
+    try:
+        data = _extract_json(_generate(prompt))
+        return {
+            "needs_reply": bool(data.get("needs_reply", False)),
+            "draft": (data.get("draft") or "").strip(),
+        }
+    except (ValueError, json.JSONDecodeError, TypeError):
+        return {"needs_reply": False, "draft": ""}
 
 
 def daily_task() -> str:

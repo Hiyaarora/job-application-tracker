@@ -9,20 +9,22 @@ from datetime import datetime, timezone
 from . import config
 
 
-def load_seen() -> set:
-    """Load the set of already-scanned email ids (empty if none yet)."""
-    if not config.SEEN_FILE.exists():
+def load_seen(path=None) -> set:
+    """Load a set of already-processed email ids (empty if none yet)."""
+    path = path or config.SEEN_FILE
+    if not path.exists():
         return set()
     try:
-        return set(json.loads(config.SEEN_FILE.read_text()))
+        return set(json.loads(path.read_text()))
     except (ValueError, OSError):
         return set()
 
 
-def save_seen(seen: set) -> None:
-    """Persist the set of scanned email ids."""
+def save_seen(seen: set, path=None) -> None:
+    """Persist a set of processed email ids."""
+    path = path or config.SEEN_FILE
     config.ensure_app_dir()
-    config.SEEN_FILE.write_text(json.dumps(sorted(seen)))
+    path.write_text(json.dumps(sorted(seen)))
 
 
 def _prefilter(emails: list[dict], apps) -> list[dict]:
@@ -159,6 +161,41 @@ def discover_applications(tracker, emails, extractor, min_confidence: float = 0.
 
     return {"added": added, "updated": updated,
             "skipped_quota": skipped_quota, "error": error}
+
+
+def propose_drafts(emails, proposer, seen: set | None = None, max_llm: int = 10) -> dict:
+    """Find emails needing a reply and draft them — one LLM call per email.
+
+    Skips noise (OTP/verification) and already-considered emails, caps LLM calls
+    at `max_llm`, and records every email it considers in `seen` so a reply is
+    never drafted twice. Returns {drafts: [{email, draft}], error}.
+    """
+    if seen is None:
+        seen = set()
+    candidates = [e for e in emails
+                  if not _is_noise(e) and e.get("id") not in seen][:max_llm]
+
+    drafts, error = [], None
+    for email in candidates:
+        try:
+            r = proposer(email)
+        except Exception as exc:  # quota/rate/network — stop, keep what we have
+            error = str(exc)
+            break
+        seen.add(email.get("id"))
+        if r.get("needs_reply") and r.get("draft"):
+            drafts.append({"email": email, "draft": r["draft"]})
+    return {"drafts": drafts, "error": error}
+
+
+def review_draft(draft: str, prompt_fn, edit_fn):
+    """Approve / edit / skip a draft. Returns the text to send, or None to skip."""
+    choice = prompt_fn("[a]pprove & send / [e]dit / [s]kip? ").strip().lower()
+    if choice == "a":
+        return draft
+    if choice == "e":
+        return edit_fn(draft)
+    return None
 
 
 def _log_change(message: str) -> None:

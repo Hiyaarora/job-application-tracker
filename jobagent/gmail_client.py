@@ -60,6 +60,12 @@ def _extract_plain(payload: dict) -> str:
     return _decode(data) if data else ""
 
 
+def sender_email(sender: str) -> str:
+    """Extract the bare email address from a 'Name <addr>' or 'addr' string."""
+    m = re.search(r"[\w.+-]+@[\w.-]+", sender)
+    return m.group(0) if m else ""
+
+
 def _domain(sender: str) -> str:
     """Pull the domain out of a 'Name <user@domain>' or 'user@domain' string."""
     m = re.search(r"[\w.+-]+@([\w.-]+)", sender)

@@ -76,6 +76,12 @@ def test_parse_message_body_in_payload_root():
     assert parsed["sender_domain"] == "b.com"
 
 
+def test_sender_email_extracts_address():
+    assert gmail_client.sender_email("Recruiter <jobs@acme.com>") == "jobs@acme.com"
+    assert gmail_client.sender_email("plain@beta.com") == "plain@beta.com"
+    assert gmail_client.sender_email("No address here") == ""
+
+
 def test_send_message_calls_api():
     service = MagicMock()
     send = service.users.return_value.messages.return_value.send

@@ -68,6 +68,28 @@ def test_extract_application_handles_garbage(monkeypatch):
     assert result["is_job_application"] is False
 
 
+def test_propose_reply_parses_needs_reply_and_draft(monkeypatch):
+    monkeypatch.setattr(llm, "_generate", lambda prompt: (
+        '{"needs_reply": true, "draft": "Hi Sarah, I would be glad to interview..."}'
+    ))
+    r = llm.propose_reply({"sender": "r@acme.com", "subject": "Interview?", "body": "When are you free?"})
+    assert r["needs_reply"] is True
+    assert r["draft"].startswith("Hi Sarah")
+
+
+def test_propose_reply_no_reply_needed(monkeypatch):
+    monkeypatch.setattr(llm, "_generate", lambda prompt: '{"needs_reply": false, "draft": ""}')
+    r = llm.propose_reply({"sender": "", "subject": "Rejection", "body": "no"})
+    assert r["needs_reply"] is False
+
+
+def test_propose_reply_handles_garbage(monkeypatch):
+    monkeypatch.setattr(llm, "_generate", lambda prompt: "not json")
+    r = llm.propose_reply({"sender": "", "subject": "", "body": ""})
+    assert r["needs_reply"] is False
+    assert r["draft"] == ""
+
+
 def test_is_quota_error_detects_429():
     assert llm._is_quota_error(Exception("429 You exceeded your current quota")) is True
     assert llm._is_quota_error(Exception("Quota exceeded for metric")) is True

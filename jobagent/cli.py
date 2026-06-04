@@ -1,5 +1,8 @@
 """Command-line interface for the Job Search Agent."""
 import argparse
+import os
+import subprocess
+import tempfile
 from pathlib import Path
 
 from . import agent, auth, config, gmail_client, llm, scheduler, setup
@@ -117,6 +120,53 @@ def cmd_update(args):
     run_discover(auth.gmail_service(), _tracker(), args.days, args.max, args.max_llm)
 
 
+def _edit_in_editor(text: str) -> str:
+    """Open the draft in $EDITOR (default nano), return the edited text."""
+    editor = os.environ.get("EDITOR", "nano")
+    with tempfile.NamedTemporaryFile("w+", suffix=".txt", delete=False) as fh:
+        fh.write(text)
+        path = fh.name
+    try:
+        subprocess.run([editor, path])
+        with open(path) as fh:
+            return fh.read().strip()
+    finally:
+        os.unlink(path)
+
+
+def cmd_drafts(args):
+    if not _require_gemini():
+        return
+    gmail = auth.gmail_service()
+    refs, emails = _fetch(gmail, args.days, args.max, query=config.REPLY_QUERY)
+    print(f"Checking {len(refs)} recent email(s) that may need a reply...")
+    seen = agent.load_seen(config.DRAFTS_SEEN_FILE)
+    result = agent.propose_drafts(emails, llm.propose_reply, seen=seen, max_llm=args.max_llm)
+    agent.save_seen(seen, config.DRAFTS_SEEN_FILE)
+
+    drafts = result["drafts"]
+    if not drafts:
+        print("No emails need a reply right now.")
+    for i, d in enumerate(drafts, 1):
+        email, draft = d["email"], d["draft"]
+        print("\n" + "─" * 60)
+        print(f"Draft {i} of {len(drafts)}")
+        print(f"To:      {email['sender']}")
+        print(f"Subject: Re: {email['subject']}\n")
+        print(draft)
+        print("─" * 60)
+        final = agent.review_draft(draft, input, _edit_in_editor)
+        if not final:
+            print("Skipped — nothing sent.")
+            continue
+        to = gmail_client.sender_email(email["sender"])
+        gmail_client.send_message(gmail, to, f"Re: {email['subject']}", final,
+                                  thread_id=email.get("thread_id"))
+        print(f"Sent to {to}.")
+    if result.get("error"):
+        print(f"\nStopped early (likely Gemini quota): {result['error']}")
+
+
 def cmd_schedule(args):
     if args.uninstall:
         removed = scheduler.uninstall()
@@ -171,6 +221,13 @@ def build_parser() -> argparse.ArgumentParser:
     u.add_argument("--max-llm", type=int, default=15, dest="max_llm",
                    help="Max emails to scan with Gemini (default 15)")
     u.set_defaults(func=cmd_update)
+
+    dr = sub.add_parser("drafts", help="Draft replies to emails needing a response (approve before send)")
+    dr.add_argument("--days", type=int, default=5, help="How many days back to check (default 5)")
+    dr.add_argument("--max", type=int, default=30, help="Max emails to fetch (default 30)")
+    dr.add_argument("--max-llm", type=int, default=10, dest="max_llm",
+                    help="Max emails to draft with Gemini (default 10)")
+    dr.set_defaults(func=cmd_drafts)
 
     sched = sub.add_parser("schedule", help="Install/remove the automatic daily run (macOS)")
     sched.add_argument("--at", default="09:00", help="Daily run time, HH:MM (default 09:00)")

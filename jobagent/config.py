@@ -39,12 +39,23 @@ APPLICATION_QUERY = (
     'subject:"application with" OR subject:"application confirmation"'
 )
 
+# A Gmail search for emails that likely need a personal reply (interview
+# scheduling, recruiter questions). Used by `drafts` to avoid spending LLM
+# calls on confirmations/rejections that need no response.
+REPLY_QUERY = (
+    'subject:interview OR subject:availability OR subject:schedule OR '
+    'subject:"next steps" OR subject:"speak with" OR subject:"chat" OR '
+    'subject:"give us a call" OR subject:"your availability" OR '
+    'subject:"set up a" OR subject:"book a" OR subject:"time to talk"'
+)
+
 # Where we keep secrets/state (created on demand, 0700).
 APP_DIR = Path(os.path.expanduser("~")) / ".jobagent"
 KEY_FILE = APP_DIR / "key"           # Fernet key, 0600
 TOKEN_FILE = APP_DIR / "token.enc"   # encrypted OAuth credentials
 CHANGES_LOG = APP_DIR / "changes.log"
-SEEN_FILE = APP_DIR / "seen.json"    # ids of emails already scanned by discover
+SEEN_FILE = APP_DIR / "seen.json"            # ids already scanned by discover
+DRAFTS_SEEN_FILE = APP_DIR / "drafts_seen.json"  # ids already considered for a reply
 
 # From .env
 CLIENT_SECRETS_FILE = os.getenv("GOOGLE_CLIENT_SECRETS_FILE", "client_secret.json")
