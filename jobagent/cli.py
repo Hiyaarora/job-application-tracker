@@ -167,6 +167,29 @@ def cmd_drafts(args):
         print(f"\nStopped early (likely Gemini quota): {result['error']}")
 
 
+def cmd_summary(args):
+    s = agent.weekly_summary(_tracker())
+    print("══ Job Search — Weekly Summary ══")
+    print(f"  Total applications : {s['total']}")
+    print(f"  Applied this week  : {s['applied_this_week']}")
+    print(f"  Responses received : {s['responses']}  (response rate {int(s['response_rate'] * 100)}%)")
+    print(f"  Interviews         : {s['interviews']}")
+    print(f"  Offers             : {s['offers']}")
+    print(f"  Rejections         : {s['rejections']}")
+    print(f"  Follow-ups pending : {s['pending']}  (Applied / In Review awaiting reply)")
+    print("  By status:")
+    for status, count in s["by_status"].items():
+        if count:
+            print(f"    - {status:20} {count}")
+
+
+def cmd_task(args):
+    if not _require_gemini():
+        return
+    print("Today's skill task for growing into AI/ML testing roles:\n")
+    print("  " + llm.daily_task())
+
+
 def cmd_schedule(args):
     if args.uninstall:
         removed = scheduler.uninstall()
@@ -228,6 +251,9 @@ def build_parser() -> argparse.ArgumentParser:
     dr.add_argument("--max-llm", type=int, default=10, dest="max_llm",
                     help="Max emails to draft with Gemini (default 10)")
     dr.set_defaults(func=cmd_drafts)
+
+    sub.add_parser("summary", help="Weekly dashboard: response rate, interviews, pending").set_defaults(func=cmd_summary)
+    sub.add_parser("task", help="One daily skill-learning task for AI/ML testing roles").set_defaults(func=cmd_task)
 
     sched = sub.add_parser("schedule", help="Install/remove the automatic daily run (macOS)")
     sched.add_argument("--at", default="09:00", help="Daily run time, HH:MM (default 09:00)")

@@ -4,7 +4,7 @@ Everything is injectable (classifier, log_fn, emails) so the logic is testable
 without network or quota.
 """
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from . import config
 
@@ -196,6 +196,29 @@ def review_draft(draft: str, prompt_fn, edit_fn):
     if choice == "e":
         return edit_fn(draft)
     return None
+
+
+def weekly_summary(tracker, now=None) -> dict:
+    """Compute growth metrics from the tracker (no LLM). `now` is injectable."""
+    now = now or datetime.now(timezone.utc)
+    week_ago = (now - timedelta(days=7)).date().isoformat()
+    apps = tracker.get_applications()
+    total = len(apps)
+
+    responded = [a for a in apps if a.status != "Applied"]
+    by_status = {s: sum(1 for a in apps if a.status == s) for s in config.STATUSES}
+
+    return {
+        "total": total,
+        "by_status": by_status,
+        "responses": len(responded),
+        "response_rate": round(len(responded) / total, 2) if total else 0.0,
+        "interviews": by_status["Interview Scheduled"],
+        "offers": by_status["Offer"],
+        "rejections": by_status["Rejected"],
+        "pending": by_status["Applied"] + by_status["In Review"],
+        "applied_this_week": sum(1 for a in apps if a.date_applied >= week_ago),
+    }
 
 
 def _log_change(message: str) -> None:
