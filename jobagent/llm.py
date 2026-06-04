@@ -40,9 +40,14 @@ def _is_quota_error(exc: Exception) -> bool:
     return "429" in text or "quota" in text or "resourceexhausted" in text
 
 
-def _call_with_retry(fn, *, max_retries: int = 5, sleep_fn=time.sleep,
-                     base_delay: float = 40.0):
-    """Call fn(); on a quota/rate error wait and retry (free tier = ~5 req/min)."""
+def _call_with_retry(fn, *, max_retries: int = 2, sleep_fn=time.sleep,
+                     base_delay: float = 45.0):
+    """Call fn(); on a quota/rate error wait and retry.
+
+    Tuned for the free tier (~5 req/min): one ~45s wait clears the per-minute
+    limit. We cap retries low so an exhausted *daily* quota fails fast instead
+    of stalling an unattended daily run for minutes.
+    """
     for attempt in range(max_retries + 1):
         try:
             return fn()
