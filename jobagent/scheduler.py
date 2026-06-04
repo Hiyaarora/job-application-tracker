@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import config
 
-LABEL = "com.hiya.jobsearch-agent"
+LABEL = "com.hiya.job-application-tracker"
 PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
 LOG_PATH = config.APP_DIR / "daily.log"
 

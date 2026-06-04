@@ -1,4 +1,4 @@
-"""Command-line interface for the Job Search Agent."""
+"""Command-line interface for the Job Application Tracker."""
 import argparse
 import os
 import subprocess
@@ -207,7 +207,7 @@ def cmd_schedule(args):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="jobagent", description="AI Job Search Agent")
+    parser = argparse.ArgumentParser(prog="jobagent", description="AI Job Application Tracker")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("setup", help="Guided first-time setup (opens Google pages)").set_defaults(func=cmd_setup)

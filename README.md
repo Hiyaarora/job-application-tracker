@@ -1,4 +1,4 @@
-# Job Search Agent
+# Job Application Tracker
 
 A terminal AI assistant that manages your job search end to end:
 
@@ -51,7 +51,7 @@ Rejected/Offer); it only ever moves *forward*.
 ### 1. Install
 
 ```bash
-cd jobsearch-agent
+cd job-application-tracker
 python3 -m venv .venv
 source .venv/bin/activate          # on macOS/Linux
 pip install -r requirements.txt
@@ -75,7 +75,7 @@ follow the manual steps below — the wizard does exactly these.
 
 **a. Create a Google Cloud project**
 Go to <https://console.cloud.google.com/projectcreate>, create a project (e.g.
-"Job Search Agent"), and select it.
+"Job Application Tracker"), and select it.
 
 **b. Enable the two APIs** (off by default)
 - Gmail API: <https://console.cloud.google.com/apis/library/gmail.googleapis.com> → **Enable**
@@ -129,7 +129,7 @@ app"** warning — that's expected for a personal test app. Click **Advanced →
 ### 5. First run — the sheet is created for you
 
 The first time you add or discover an application, the agent creates a Google
-Sheet called **"Job Search Tracker"** and prints its ID. **Paste that ID into your
+Sheet called **"Job Application Tracker"** and prints its ID. **Paste that ID into your
 `.env`** as `SPREADSHEET_ID` so it reuses the same sheet next time.
 
 ---

@@ -53,7 +53,7 @@ def get_or_create_sheet(service, spreadsheet_id: str) -> str:
     if spreadsheet_id:
         return spreadsheet_id
     created = (service.spreadsheets().create(body={
-        "properties": {"title": "Job Search Tracker"},
+        "properties": {"title": "Job Application Tracker"},
         "sheets": [{"properties": {"title": config.SHEET_TAB}}],
     }).execute(num_retries=_RETRIES))
     sid = created["spreadsheetId"]

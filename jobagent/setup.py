@@ -68,7 +68,7 @@ def run_setup(project_dir: Path, *, opener=webbrowser.open, prompt=input, out=pr
         prompt("Press Enter when done... ")
 
     out("=" * 60)
-    out("  Job Search Agent — guided setup")
+    out("  Job Application Tracker — guided setup")
     out("=" * 60)
     out("This wizard opens each Google page you need and waits for you.")
 
@@ -76,7 +76,7 @@ def run_setup(project_dir: Path, *, opener=webbrowser.open, prompt=input, out=pr
     step(1, "Create a Google Cloud project")
     open_and_wait(
         URL_NEW_PROJECT,
-        "Create a project (e.g. 'Job Search Agent') and select it.",
+        "Create a project (e.g. 'Job Application Tracker') and select it.",
     )
 
     # 2. Enable APIs
