@@ -122,7 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     d = sub.add_parser("discover", help="Find job applications in Gmail and add them to the tracker")
     d.add_argument("--days", type=int, default=7, help="How many days back to scan (default 7)")
-    d.add_argument("--max", type=int, default=100, help="Max emails to fetch (default 100)")
+    d.add_argument("--max", type=int, default=40, help="Max emails to fetch (default 40)")
     d.add_argument("--max-llm", type=int, default=15, dest="max_llm",
                    help="Max emails to scan with Gemini, protects the free quota (default 15)")
     d.set_defaults(func=cmd_discover)

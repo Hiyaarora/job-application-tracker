@@ -7,12 +7,15 @@ import base64
 import re
 from email.mime.text import MIMEText
 
+# Let the Google client retry transient network/5xx errors with backoff.
+_RETRIES = 3
+
 
 def list_recent(service, days: int = 2, max_results: int = 100) -> list[dict]:
     """Return [{id, threadId}, ...] for ALL messages from the last `days` days."""
     resp = (service.users().messages()
             .list(userId="me", q=f"newer_than:{days}d", maxResults=max_results)
-            .execute())
+            .execute(num_retries=_RETRIES))
     return resp.get("messages", [])
 
 
@@ -20,7 +23,7 @@ def get_message(service, msg_id: str) -> dict:
     """Fetch the full message resource for a message id."""
     return (service.users().messages()
             .get(userId="me", id=msg_id, format="full")
-            .execute())
+            .execute(num_retries=_RETRIES))
 
 
 def _header(headers: list[dict], name: str) -> str:
@@ -82,4 +85,4 @@ def send_message(service, to: str, subject: str, body: str, thread_id: str | Non
         message["threadId"] = thread_id
     return (service.users().messages()
             .send(userId="me", body=message)
-            .execute())
+            .execute(num_retries=_RETRIES))

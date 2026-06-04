@@ -5,6 +5,9 @@ from datetime import datetime, timezone
 
 from . import config
 
+# Let the Google client retry transient network/5xx errors with backoff.
+_RETRIES = 3
+
 
 @dataclass
 class Application:
@@ -47,12 +50,12 @@ def get_or_create_sheet(service, spreadsheet_id: str) -> str:
     created = (service.spreadsheets().create(body={
         "properties": {"title": "Job Search Tracker"},
         "sheets": [{"properties": {"title": config.SHEET_TAB}}],
-    }).execute())
+    }).execute(num_retries=_RETRIES))
     sid = created["spreadsheetId"]
     (service.spreadsheets().values()
      .update(spreadsheetId=sid, range=f"{config.SHEET_TAB}!A1:G1",
              valueInputOption="RAW", body={"values": [config.SHEET_HEADERS]})
-     .execute())
+     .execute(num_retries=_RETRIES))
     return sid
 
 
@@ -68,7 +71,7 @@ class SheetsTracker(Tracker):
     def _all_rows(self) -> list[list[str]]:
         resp = (self.service.spreadsheets().values()
                 .get(spreadsheetId=self.spreadsheet_id, range=self.tab)
-                .execute())
+                .execute(num_retries=_RETRIES))
         return resp.get("values", [])
 
     def _to_app(self, row: list[str]) -> Application:
@@ -88,7 +91,7 @@ class SheetsTracker(Tracker):
         (self.service.spreadsheets().values()
          .append(spreadsheetId=self.spreadsheet_id, range=self.tab,
                  valueInputOption="USER_ENTERED", body=body)
-         .execute())
+         .execute(num_retries=_RETRIES))
         return app
 
     def get_applications(self, since=None, status=None):
@@ -125,6 +128,6 @@ class SheetsTracker(Tracker):
                  .update(spreadsheetId=self.spreadsheet_id,
                          range=f"{self.tab}!A{idx}:G{idx}",
                          valueInputOption="USER_ENTERED", body=body)
-                 .execute())
+                 .execute(num_retries=_RETRIES))
                 return app
         raise KeyError(f"{company}/{role} not found")
