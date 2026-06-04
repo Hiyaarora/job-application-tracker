@@ -53,9 +53,19 @@ _JOB_KEYWORDS = (
     "your application", "next steps", "assessment", "submission",
 )
 
-# Status precedence — higher index = more advanced. Used to dedup and to decide
-# whether a discovered status should overwrite an existing one.
-_RANK = {s: i for i, s in enumerate(config.STATUSES)}
+# Status funnel order — higher rank = further along. Status only ever moves
+# forward (Applied -> In Review -> Interview -> Rejected/Offer), driven by the
+# most-advanced email from a company. Unknown status ranks below everything.
+STATUS_RANK = {s: i for i, s in enumerate(config.STATUSES)}
+
+
+def _rank(status: str) -> int:
+    return STATUS_RANK.get(status, -1)
+
+
+def _advances(new_status: str, current_status: str) -> bool:
+    """True if new_status is further along the funnel than current_status."""
+    return _rank(new_status) > _rank(current_status)
 
 
 def _is_job_candidate(email: dict) -> bool:
@@ -87,8 +97,10 @@ def discover_applications(tracker, emails, extractor, min_confidence: float = 0.
     to_scan = candidates[:max_llm]
     skipped_quota = len(candidates) - len(to_scan)
 
-    # Collapse multiple emails for the same application to its furthest status.
-    discovered: dict[tuple[str, str], dict] = {}
+    # Merge ALL scanned emails per COMPANY: keep a real role (over "(unknown)")
+    # and the most-advanced status. This collapses a company's many emails
+    # (OTP, confirmation, rejection, ...) into one application.
+    merged: dict[str, dict] = {}
     error = None
     for email in to_scan:
         try:
@@ -99,29 +111,36 @@ def discover_applications(tracker, emails, extractor, min_confidence: float = 0.
         seen.add(email.get("id"))  # mark only after a successful scan
         if not r.get("is_job_application") or r.get("confidence", 0.0) < min_confidence:
             continue
-        company, role = r.get("company"), r.get("role")
+        company = r.get("company")
         if not company:
             continue
-        role = role or "(unknown)"
+        role = r.get("role") or "(unknown)"
         status = r.get("status", "Applied")
-        key = (company.lower(), role.lower())
-        if key not in discovered or _RANK.get(status, 0) > _RANK.get(discovered[key]["status"], 0):
-            discovered[key] = {"company": company, "role": role, "status": status}
+        key = company.lower()
+        if key not in merged:
+            merged[key] = {"company": company, "role": role, "status": status}
+        else:
+            m = merged[key]
+            if m["role"] == "(unknown)" and role != "(unknown)":
+                m["role"] = role
+            if _advances(status, m["status"]):
+                m["status"] = status
 
     added, updated = [], []
-    for info in discovered.values():
-        company, role, status = info["company"], info["role"], info["status"]
-        existing = tracker.find_application(company, role)
+    for m in merged.values():
+        company, role, status = m["company"], m["role"], m["status"]
+        existing = tracker.find_by_company(company)  # one row per company
         if existing is None:
             tracker.add_application(company, role, source="Email")
-            if status != "Applied":
+            if _advances(status, "Applied"):
                 tracker.update_status(company, role, status, note="discovered from email")
             added.append(f"{company} / {role} [{status}]")
             log_fn(f"discovered {company} / {role} -> {status}")
-        elif _RANK.get(status, 0) > _RANK.get(existing.status, 0):
-            tracker.update_status(company, role, status, note="discovered from email")
-            updated.append(f"{company} / {role}: {existing.status} -> {status}")
-            log_fn(f"discovered update {company} / {role} -> {status}")
+        elif _advances(status, existing.status):
+            tracker.update_status(existing.company, existing.role, status,
+                                  note="discovered from email")
+            updated.append(f"{company} / {existing.role}: {existing.status} -> {status}")
+            log_fn(f"discovered update {company} -> {status}")
 
     return {"added": added, "updated": updated,
             "skipped_quota": skipped_quota, "error": error}
@@ -152,20 +171,20 @@ def sync_inbox(tracker, emails, classifier, min_confidence: float = 0.6,
             break
         new_status = result.get("new_status")
         company = result.get("matched_company")
-        role = result.get("matched_role")
 
-        if not (new_status and company and role):
+        if not (new_status and company):
             continue
         if result.get("confidence", 0.0) < min_confidence:
             continue
 
-        existing = tracker.find_application(company, role)
-        if existing is None or existing.status == new_status:
+        # Match by company, and only ever move the status FORWARD in the funnel.
+        existing = tracker.find_by_company(company)
+        if existing is None or not _advances(new_status, existing.status):
             continue
 
         note = f"auto: {result.get('intent')} from {email.get('sender', '')}"
-        tracker.update_status(company, role, new_status, note=note)
-        msg = f"{company} / {role}: {existing.status} -> {new_status} ({result.get('intent')})"
+        tracker.update_status(existing.company, existing.role, new_status, note=note)
+        msg = f"{company} / {existing.role}: {existing.status} -> {new_status} ({result.get('intent')})"
         changes.append(msg)
         log_fn(msg)
 

@@ -106,6 +106,31 @@ def test_discover_marks_scanned_emails_as_seen():
     assert "1" in seen                 # scanned id recorded so future runs skip it
 
 
+def test_discover_merges_three_company_emails_into_one_row():
+    # GitLab: OTP (no role), confirmation (Applied), rejection (Rejected).
+    t = FakeTracker()
+    emails = [
+        _email("otp", subject="Your verification code", body="otp for your application"),
+        _email("conf", subject="Thank you for applying to GitLab", body="application received"),
+        _email("rej", subject="Update on your GitLab application", body="not moving forward"),
+    ]
+    by_id = {
+        "otp": {"is_job_application": True, "company": "GitLab", "role": None,
+                "status": "Applied", "confidence": 0.8},
+        "conf": {"is_job_application": True, "company": "GitLab", "role": "Backend Engineer",
+                 "status": "Applied", "confidence": 0.9},
+        "rej": {"is_job_application": True, "company": "GitLab", "role": "Backend Engineer",
+                "status": "Rejected", "confidence": 0.95},
+    }
+    agent.discover_applications(t, emails, lambda e: by_id[e["id"]],
+                               apply_keyword_filter=False, log_fn=lambda _m: None)
+    apps = t.get_applications()
+    assert len(apps) == 1                          # one GitLab row, not three
+    assert apps[0].company == "GitLab"
+    assert apps[0].role == "Backend Engineer"      # real role preferred over unknown
+    assert apps[0].status == "Rejected"            # most-advanced status wins
+
+
 def test_discover_respects_max_llm_cap():
     t = FakeTracker()
     emails = [_email(str(i), subject="job application interview", body="role") for i in range(5)]

@@ -58,6 +58,35 @@ def test_low_confidence_does_not_update():
     assert changes == []
 
 
+def test_sync_never_downgrades_status():
+    # GitLab already Rejected; a stray email classified as 'In Review' must NOT
+    # move it backward in the funnel.
+    t = FakeTracker()
+    t.add_application("GitLab", "Backend Engineer", "Email")
+    t.update_status("GitLab", "Backend Engineer", "Rejected")
+    emails = [{"id": "1", "sender": "jobs@gitlab.com", "sender_domain": "gitlab.com",
+               "subject": "GitLab application", "snippet": "", "body": "gitlab"}]
+    downgrade = {"matched_company": "GitLab", "matched_role": "Backend Engineer",
+                 "intent": "confirmation", "new_status": "In Review", "confidence": 0.9}
+    classify, _ = _classifier(downgrade)
+    changes = agent.sync_inbox(t, emails, classify, log_fn=lambda _m: None)
+    assert t.find_by_company("GitLab").status == "Rejected"   # unchanged
+    assert changes == []
+
+
+def test_sync_matches_by_company_even_if_role_differs():
+    # The classifier's role guess may not match the stored role; match on company.
+    t = FakeTracker()
+    t.add_application("Acme", "QA Engineer", "Email")
+    emails = [{"id": "1", "sender": "jobs@acme.com", "sender_domain": "acme.com",
+               "subject": "Acme interview", "snippet": "", "body": "acme"}]
+    res = {"matched_company": "Acme", "matched_role": "Some Other Title",
+           "intent": "interview_invite", "new_status": "Interview Scheduled", "confidence": 0.9}
+    classify, _ = _classifier(res)
+    agent.sync_inbox(t, emails, classify, log_fn=lambda _m: None)
+    assert t.find_by_company("Acme").status == "Interview Scheduled"
+
+
 def test_no_status_change_intent_is_skipped():
     t = FakeTracker()
     t.add_application("Acme", "QA Engineer", "LinkedIn")

@@ -43,3 +43,9 @@ class FakeTracker(Tracker):
             if r.company.lower() == company.lower() and r.role.lower() == role.lower():
                 return r
         return None
+
+    def find_by_company(self, company):
+        for r in self._rows:
+            if r.company.lower() == company.lower():
+                return r
+        return None

@@ -38,6 +38,11 @@ class Tracker(ABC):
     @abstractmethod
     def find_application(self, company: str, role: str) -> Application | None: ...
 
+    @abstractmethod
+    def find_by_company(self, company: str) -> Application | None:
+        """Find the first application for a company, regardless of role."""
+        ...
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -109,6 +114,14 @@ class SheetsTracker(Tracker):
             app = self._to_app(r)
             if (app.company.lower() == company.lower()
                     and app.role.lower() == role.lower()):
+                return app
+        return None
+
+    def find_by_company(self, company):
+        rows = self._all_rows()
+        for r in rows[1:]:
+            app = self._to_app(r)
+            if app.company.lower() == company.lower():
                 return app
         return None
 
