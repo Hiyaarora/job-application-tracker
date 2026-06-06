@@ -90,10 +90,13 @@ def test_propose_reply_handles_garbage(monkeypatch):
     assert r["draft"] == ""
 
 
-def test_is_quota_error_detects_429():
-    assert llm._is_quota_error(Exception("429 You exceeded your current quota")) is True
-    assert llm._is_quota_error(Exception("Quota exceeded for metric")) is True
-    assert llm._is_quota_error(ValueError("bad json")) is False
+def test_is_retryable_detects_transient_errors():
+    assert llm._is_retryable(Exception("429 You exceeded your current quota")) is True
+    assert llm._is_retryable(Exception("Quota exceeded for metric")) is True
+    assert llm._is_retryable(Exception("504 Deadline Exceeded")) is True
+    assert llm._is_retryable(Exception("503 Service Unavailable")) is True
+    assert llm._is_retryable(Exception("The read operation timed out")) is True
+    assert llm._is_retryable(ValueError("bad json")) is False
 
 
 def test_call_with_retry_retries_on_quota_then_succeeds():

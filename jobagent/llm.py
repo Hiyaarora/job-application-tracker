@@ -34,32 +34,42 @@ def _model():
     return genai.GenerativeModel(config.GEMINI_MODEL)
 
 
-def _is_quota_error(exc: Exception) -> bool:
-    """True for rate-limit / quota (HTTP 429) errors from the Gemini API."""
+# Transient errors worth retrying: rate-limit/quota (429) AND timeouts /
+# temporary outages (504 deadline, 503 unavailable, read timeouts).
+_RETRYABLE = ("429", "quota", "resourceexhausted", "504", "deadline",
+              "503", "unavailable", "timed out", "timeout")
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """True for transient errors (rate limit, timeout, temporary unavailability)."""
     text = str(exc).lower()
-    return "429" in text or "quota" in text or "resourceexhausted" in text
+    return any(token in text for token in _RETRYABLE)
 
 
 def _call_with_retry(fn, *, max_retries: int = 2, sleep_fn=time.sleep,
-                     base_delay: float = 45.0):
-    """Call fn(); on a quota/rate error wait and retry.
+                     base_delay: float = 30.0):
+    """Call fn(); on a transient error wait and retry.
 
-    Tuned for the free tier (~5 req/min): one ~45s wait clears the per-minute
-    limit. We cap retries low so an exhausted *daily* quota fails fast instead
-    of stalling an unattended daily run for minutes.
+    Covers the free tier's per-minute rate limit AND transient timeouts
+    (504/503). Retries are capped low so a hard daily-quota exhaustion fails
+    fast instead of stalling an unattended daily run for minutes.
     """
     for attempt in range(max_retries + 1):
         try:
             return fn()
         except Exception as exc:
-            if not _is_quota_error(exc) or attempt == max_retries:
+            if not _is_retryable(exc) or attempt == max_retries:
                 raise
             sleep_fn(base_delay)
 
 
 def _generate(prompt: str) -> str:
-    """Send a prompt to Gemini and return the raw text, retrying on rate limits."""
-    return _call_with_retry(lambda: _model().generate_content(prompt).text)
+    """Send a prompt to Gemini and return the raw text, retrying transient errors."""
+    return _call_with_retry(
+        lambda: _model().generate_content(
+            prompt, request_options={"timeout": 120}
+        ).text
+    )
 
 
 def _extract_json(text: str) -> dict:
