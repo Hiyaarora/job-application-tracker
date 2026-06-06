@@ -5,6 +5,7 @@ about the raw Gmail message format.
 """
 import base64
 import re
+from datetime import datetime, timezone
 from email.mime.text import MIMEText
 
 # Let the Google client retry transient network/5xx errors with backoff.
@@ -72,6 +73,15 @@ def _domain(sender: str) -> str:
     return m.group(1).lower() if m else ""
 
 
+def _date_from_internal(internal_ms: str) -> str:
+    """Gmail internalDate (epoch ms string) -> ISO date 'YYYY-MM-DD' (UTC)."""
+    try:
+        ts = int(internal_ms) / 1000
+        return datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
+    except (TypeError, ValueError):
+        return ""
+
+
 def parse_message(msg: dict) -> dict:
     """Flatten a Gmail message into the fields the agent needs."""
     payload = msg.get("payload", {})
@@ -85,6 +95,7 @@ def parse_message(msg: dict) -> dict:
         "subject": _header(headers, "Subject"),
         "snippet": msg.get("snippet", ""),
         "body": _extract_plain(payload),
+        "date": _date_from_internal(msg.get("internalDate")),
     }
 
 

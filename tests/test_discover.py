@@ -148,6 +148,25 @@ def test_discover_merges_three_company_emails_into_one_row():
     assert apps[0].status == "Rejected"            # most-advanced status wins
 
 
+def test_discover_uses_earliest_email_date_as_applied():
+    t = FakeTracker()
+    conf = _email("conf", subject="Thank you for applying to ClanX", body="received")
+    conf["date"] = "2026-06-03"
+    rej = _email("rej", subject="Update on your ClanX application", body="rejected")
+    rej["date"] = "2026-06-06"
+    by_id = {
+        "conf": {"is_job_application": True, "company": "ClanX", "role": "AI Engineer",
+                 "status": "Applied", "confidence": 0.9},
+        "rej": {"is_job_application": True, "company": "ClanX", "role": "AI Engineer",
+                "status": "Rejected", "confidence": 0.9},
+    }
+    agent.discover_applications(t, [rej, conf], lambda e: by_id[e["id"]],
+                               apply_keyword_filter=False, log_fn=lambda _m: None)
+    app = t.find_by_company("ClanX")
+    assert app.date_applied == "2026-06-03"   # earliest email, not discovery date
+    assert app.status == "Rejected"
+
+
 def test_discover_respects_max_llm_cap():
     t = FakeTracker()
     emails = [_email(str(i), subject="job application interview", body="role") for i in range(5)]

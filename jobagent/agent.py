@@ -133,22 +133,28 @@ def discover_applications(tracker, emails, extractor, min_confidence: float = 0.
             continue
         role = r.get("role") or "(unknown)"
         status = r.get("status", "Applied")
+        edate = email.get("date") or ""
         key = company.lower()
         if key not in merged:
-            merged[key] = {"company": company, "role": role, "status": status}
+            merged[key] = {"company": company, "role": role, "status": status, "date": edate}
         else:
             m = merged[key]
             if m["role"] == "(unknown)" and role != "(unknown)":
                 m["role"] = role
             if _advances(status, m["status"]):
                 m["status"] = status
+            # Date Applied = the EARLIEST email from this company (the application),
+            # not the latest (e.g. a rejection) or today's discovery date.
+            if edate and (not m["date"] or edate < m["date"]):
+                m["date"] = edate
 
     added, updated = [], []
     for m in merged.values():
         company, role, status = m["company"], m["role"], m["status"]
         existing = tracker.find_by_company(company)  # one row per company
         if existing is None:
-            tracker.add_application(company, role, source="Email")
+            tracker.add_application(company, role, source="Email",
+                                    date_applied=(m["date"] or None))
             if _advances(status, "Applied"):
                 tracker.update_status(company, role, status, note="discovered from email")
             added.append(f"{company} / {role} [{status}]")
