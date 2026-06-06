@@ -43,6 +43,13 @@ class Tracker(ABC):
         """Find the first application for a company, regardless of role."""
         ...
 
+    @abstractmethod
+    def update_application(self, company: str, role: str | None = None,
+                           status: str | None = None,
+                           note: str | None = None) -> Application | None:
+        """Update a company's row: set role and/or status, append a note."""
+        ...
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -125,6 +132,15 @@ class SheetsTracker(Tracker):
                 return app
         return None
 
+    def _write_row(self, idx: int, app: Application) -> None:
+        body = {"values": [[app.company, app.role, app.date_applied,
+                            app.source, app.status, app.last_updated, app.notes]]}
+        (self.service.spreadsheets().values()
+         .update(spreadsheetId=self.spreadsheet_id,
+                 range=f"{self.tab}!A{idx}:G{idx}",
+                 valueInputOption="USER_ENTERED", body=body)
+         .execute(num_retries=_RETRIES))
+
     def update_status(self, company, role, status, note=None):
         rows = self._all_rows()
         for idx, r in enumerate(rows[1:], start=2):  # 1-based + header
@@ -135,12 +151,22 @@ class SheetsTracker(Tracker):
                 app.last_updated = _now_iso()
                 if note:
                     app.notes = (app.notes + " | " + note).strip(" |")
-                body = {"values": [[app.company, app.role, app.date_applied,
-                                    app.source, app.status, app.last_updated, app.notes]]}
-                (self.service.spreadsheets().values()
-                 .update(spreadsheetId=self.spreadsheet_id,
-                         range=f"{self.tab}!A{idx}:G{idx}",
-                         valueInputOption="USER_ENTERED", body=body)
-                 .execute(num_retries=_RETRIES))
+                self._write_row(idx, app)
                 return app
         raise KeyError(f"{company}/{role} not found")
+
+    def update_application(self, company, role=None, status=None, note=None):
+        rows = self._all_rows()
+        for idx, r in enumerate(rows[1:], start=2):
+            app = self._to_app(r)
+            if app.company.lower() == company.lower():
+                if role:
+                    app.role = role
+                if status:
+                    app.status = status
+                app.last_updated = _now_iso()
+                if note:
+                    app.notes = (app.notes + " | " + note).strip(" |")
+                self._write_row(idx, app)
+                return app
+        return None

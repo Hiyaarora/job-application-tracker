@@ -49,3 +49,16 @@ class FakeTracker(Tracker):
             if r.company.lower() == company.lower():
                 return r
         return None
+
+    def update_application(self, company, role=None, status=None, note=None):
+        app = self.find_by_company(company)
+        if app is None:
+            return None
+        if role:
+            app.role = role
+        if status:
+            app.status = status
+        app.last_updated = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        if note:
+            app.notes = (app.notes + " | " + note).strip(" |")
+        return app

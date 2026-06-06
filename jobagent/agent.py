@@ -91,9 +91,26 @@ def _is_noise(email: dict) -> bool:
     return any(p in hay for p in _NOISE_PATTERNS)
 
 
+# Outcome emails (rejection/interview/offer/status update) carry both the role
+# and the definitive status, so they're the most informative to read. Within a
+# limited AI budget we scan these BEFORE plain confirmations.
+_OUTCOME_SIGNALS = (
+    "unfortunately", "not progressing", "not moving forward", "regret",
+    "no longer", "interview", "next step", "offer", "assessment",
+    "update on your application", "status update", "moving forward",
+    "schedule", "shortlisted", "selected",
+)
+
+
+def _scan_priority(email: dict) -> int:
+    hay = (email.get("subject", "") + " " + email.get("snippet", "")
+           + " " + email.get("body", "")).lower()
+    return 1 if any(s in hay for s in _OUTCOME_SIGNALS) else 0
+
+
 def discover_applications(tracker, emails, extractor, min_confidence: float = 0.6,
                           max_llm: int = 15, log_fn=None, seen: set | None = None,
-                          apply_keyword_filter: bool = True) -> dict:
+                          apply_keyword_filter: bool = True, refresh: bool = False) -> dict:
     """Scan emails, extract job applications, and populate the tracker.
 
     Keyword-filters first (no LLM), skips emails already in `seen`, caps LLM
@@ -110,7 +127,10 @@ def discover_applications(tracker, emails, extractor, min_confidence: float = 0.
     candidates = [e for e in emails
                   if (not apply_keyword_filter or _is_job_candidate(e))
                   and not _is_noise(e)
-                  and e.get("id") not in seen]
+                  and (refresh or e.get("id") not in seen)]
+    # Spend the limited AI budget on the most informative emails first (outcome
+    # emails with role + final status), keeping recency order within each tier.
+    candidates.sort(key=_scan_priority, reverse=True)
     to_scan = candidates[:max_llm]
     skipped_quota = len(candidates) - len(to_scan)
 
@@ -159,11 +179,25 @@ def discover_applications(tracker, emails, extractor, min_confidence: float = 0.
                 tracker.update_status(company, role, status, note="discovered from email")
             added.append(f"{company} / {role} [{status}]")
             log_fn(f"discovered {company} / {role} -> {status}")
-        elif _advances(status, existing.status):
-            tracker.update_status(existing.company, existing.role, status,
-                                  note="discovered from email")
-            updated.append(f"{company} / {existing.role}: {existing.status} -> {status}")
-            log_fn(f"discovered update {company} -> {status}")
+        else:
+            # Advance status if further along, and/or fill a missing role from
+            # a clearer email — so the agent self-corrects over time.
+            advance = _advances(status, existing.status)
+            fill_role = existing.role in ("", "(unknown)") and role not in ("", "(unknown)")
+            if advance or fill_role:
+                tracker.update_application(
+                    company,
+                    role=(role if fill_role else None),
+                    status=(status if advance else None),
+                    note="discovered from email",
+                )
+                bits = []
+                if advance:
+                    bits.append(f"{existing.status} -> {status}")
+                if fill_role:
+                    bits.append(f"role -> {role}")
+                updated.append(f"{company}: " + ", ".join(bits))
+                log_fn(f"discovered update {company}: " + ", ".join(bits))
 
     return {"added": added, "updated": updated,
             "skipped_quota": skipped_quota, "error": error}

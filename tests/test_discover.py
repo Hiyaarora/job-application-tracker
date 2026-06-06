@@ -148,6 +148,70 @@ def test_discover_merges_three_company_emails_into_one_row():
     assert apps[0].status == "Rejected"            # most-advanced status wins
 
 
+def test_discover_prioritizes_informative_outcome_emails():
+    # Deutsche Bank: a role-less confirmation AND a rejection that has the role +
+    # the real status. With only 1 AI read available, the agent must spend it on
+    # the REJECTION (informative), so it gets role + status right the first time.
+    t = FakeTracker()
+    conf = _email("conf", subject="Your job application with Deutsche Bank",
+                  body="we received your application")
+    rej = _email("rej", subject="Update on your Deutsche Bank application",
+                 body="Unfortunately we are not progressing with your application "
+                      "for the Process Reengineer, NCT position")
+    calls = []
+
+    def extractor(e):
+        calls.append(e["id"])
+        if e["id"] == "rej":
+            return {"is_job_application": True, "company": "Deutsche Bank",
+                    "role": "Process Reengineer, NCT", "status": "Rejected", "confidence": 0.95}
+        return {"is_job_application": True, "company": "Deutsche Bank",
+                "role": None, "status": "Applied", "confidence": 0.8}
+
+    agent.discover_applications(t, [conf, rej], extractor, max_llm=1,
+                                apply_keyword_filter=False, log_fn=lambda _m: None)
+    assert calls == ["rej"]                       # informative email scanned first
+    app = t.find_by_company("Deutsche Bank")
+    assert app.role == "Process Reengineer, NCT"
+    assert app.status == "Rejected"
+
+
+def test_discover_backfills_unknown_role_from_later_email():
+    # Company already tracked with an unknown role; a later email reveals it.
+    t = FakeTracker()
+    t.add_application("Amazon", "(unknown)", "Email")
+    emails = [_email("1", subject="Thank you for Applying to Amazon",
+                     body="received your application")]
+
+    def extractor(e):
+        return {"is_job_application": True, "company": "Amazon",
+                "role": "Applied Scientist I", "status": "Applied", "confidence": 0.9}
+
+    res = agent.discover_applications(t, emails, extractor, apply_keyword_filter=False,
+                                      log_fn=lambda _m: None)
+    assert t.find_by_company("Amazon").role == "Applied Scientist I"  # role filled in
+    assert res["updated"]
+
+
+def test_discover_refresh_rescans_already_seen_emails():
+    # refresh=True lets the agent re-examine emails it already scanned, so it
+    # can self-heal old rows (e.g. fill a role) without manual editing.
+    t = FakeTracker()
+    t.add_application("Amazon", "(unknown)", "Email")
+    emails = [_email("1", subject="Thank you for Applying to Amazon", body="x")]
+    calls = []
+
+    def extractor(e):
+        calls.append(e["id"])
+        return {"is_job_application": True, "company": "Amazon",
+                "role": "Applied Scientist I", "status": "Applied", "confidence": 0.9}
+
+    agent.discover_applications(t, emails, extractor, seen={"1"}, refresh=True,
+                                apply_keyword_filter=False, log_fn=lambda _m: None)
+    assert calls == ["1"]                                   # re-scanned despite being seen
+    assert t.find_by_company("Amazon").role == "Applied Scientist I"
+
+
 def test_discover_uses_earliest_email_date_as_applied():
     t = FakeTracker()
     conf = _email("conf", subject="Thank you for applying to ClanX", body="received")

@@ -57,20 +57,33 @@ def _require_gemini() -> bool:
     return True
 
 
+def application_query(company: str | None = None) -> str:
+    """Gmail search for application emails, optionally scoped to one company."""
+    if company:
+        return f'({config.APPLICATION_QUERY}) "{company}"'
+    return config.APPLICATION_QUERY
+
+
 def _fetch(gmail, days, max_results, query=None):
     refs = gmail_client.list_recent(gmail, days=days, max_results=max_results, query=query)
     return refs, [gmail_client.parse_message(gmail_client.get_message(gmail, r["id"])) for r in refs]
 
 
-def run_discover(gmail, tracker, days: int, max_fetch: int, max_llm: int) -> None:
-    """Find new applications in Gmail and add them to the tracker."""
-    refs, emails = _fetch(gmail, days, max_fetch, query=config.APPLICATION_QUERY)
-    print(f"Found {len(refs)} likely application email(s) in the last {days} day(s); "
-          f"reading up to {max_llm} with AI...")
+def run_discover(gmail, tracker, days: int, max_fetch: int, max_llm: int,
+                 refresh: bool = False, company: str | None = None) -> None:
+    """Find applications in Gmail and add/heal them. Scope to one company to
+    re-scan just its emails (cheap, guaranteed to reach that row)."""
+    if company:
+        refresh = True  # healing a specific row means re-reading its (seen) emails
+    refs, emails = _fetch(gmail, days, max_fetch, query=application_query(company))
+    scope = f' for "{company}"' if company else ""
+    mode = "re-reading up to" if refresh else "reading up to"
+    print(f"Found {len(refs)} likely application email(s){scope} in the last {days} day(s); "
+          f"{mode} {max_llm} with AI...")
     seen = agent.load_seen()
     summary = agent.discover_applications(tracker, emails, llm.extract_application,
                                           max_llm=max_llm, seen=seen,
-                                          apply_keyword_filter=False)
+                                          apply_keyword_filter=False, refresh=refresh)
     agent.save_seen(seen)
     for a in summary["added"]:
         print(f"  + added   {a}")
@@ -108,7 +121,8 @@ def cmd_sync(args):
 def cmd_discover(args):
     if not _require_gemini():
         return
-    run_discover(auth.gmail_service(), _tracker(), args.days, args.max, args.max_llm)
+    run_discover(auth.gmail_service(), _tracker(), args.days, args.max, args.max_llm,
+                 refresh=args.refresh, company=args.company)
 
 
 def cmd_update(args):
@@ -235,6 +249,9 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--max", type=int, default=40, help="Max emails to fetch (default 40)")
     d.add_argument("--max-llm", type=int, default=15, dest="max_llm",
                    help="Max emails to scan with Gemini, protects the free quota (default 15)")
+    d.add_argument("--refresh", action="store_true",
+                   help="Re-scan already-seen emails to self-heal old rows (fill roles, fix statuses)")
+    d.add_argument("--company", help="Heal just one company: re-scan only its emails (cheap, 1-2 AI calls)")
     d.set_defaults(func=cmd_discover)
 
     u = sub.add_parser("update", help="Daily: discover new applications + update statuses")
