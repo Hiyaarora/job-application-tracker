@@ -76,6 +76,27 @@ def test_parse_message_body_in_payload_root():
     assert parsed["sender_domain"] == "b.com"
 
 
+def test_parse_message_converts_html_only_body_to_text():
+    html = ("<html><head><style>p{color:red}</style></head><body>"
+            "<p>Thank you for your interest in the <b>Process Reengineer, NCT</b> "
+            "position.</p><p>Unfortunately we are not progressing with your "
+            "application.</p></body></html>")
+    msg = {
+        "id": "h", "threadId": "th",
+        "payload": {
+            "headers": [{"name": "From", "value": "db@myworkday.com"}],
+            "mimeType": "text/html",
+            "body": {"data": _b64(html)},
+        },
+        "snippet": "Thank you for your interest",
+    }
+    body = gmail_client.parse_message(msg)["body"]
+    assert "<" not in body and ">" not in body            # tags stripped
+    assert "Process Reengineer, NCT" in body              # real text preserved
+    assert "not progressing" in body
+    assert "color:red" not in body                        # <style> contents dropped
+
+
 def test_sender_email_extracts_address():
     assert gmail_client.sender_email("Recruiter <jobs@acme.com>") == "jobs@acme.com"
     assert gmail_client.sender_email("plain@beta.com") == "plain@beta.com"

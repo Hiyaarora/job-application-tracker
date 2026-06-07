@@ -4,6 +4,7 @@ Everything here returns plain dicts/strings so the agent layer never has to know
 about the raw Gmail message format.
 """
 import base64
+import html as _html
 import re
 from datetime import datetime, timezone
 from email.mime.text import MIMEText
@@ -46,19 +47,41 @@ def _decode(data: str) -> str:
     return base64.urlsafe_b64decode(data.encode()).decode("utf-8", errors="replace")
 
 
-def _extract_plain(payload: dict) -> str:
-    """Walk the MIME tree and return the first text/plain body found."""
-    if payload.get("mimeType") == "text/plain":
+def _html_to_text(html: str) -> str:
+    """Strip HTML to readable text so the AI reads content, not markup."""
+    html = re.sub(r"(?is)<(script|style|head)[^>]*>.*?</\1>", " ", html)
+    html = re.sub(r"(?s)<[^>]+>", " ", html)          # drop all tags
+    html = _html.unescape(html)                        # &amp; -> & etc.
+    return re.sub(r"\s+", " ", html).strip()
+
+
+def _find_part(payload: dict, mime: str) -> str:
+    """Return the decoded body of the first part with the given mime type."""
+    if payload.get("mimeType") == mime:
         data = payload.get("body", {}).get("data")
         if data:
             return _decode(data)
     for part in payload.get("parts", []) or []:
-        text = _extract_plain(part)
-        if text:
-            return text
-    # Fallback: a body at the root with no explicit text/plain mimeType.
+        found = _find_part(part, mime)
+        if found:
+            return found
+    return ""
+
+
+def _extract_plain(payload: dict) -> str:
+    """Best readable text for an email: prefer text/plain, else convert HTML."""
+    plain = _find_part(payload, "text/plain")
+    if plain:
+        return plain
+    html = _find_part(payload, "text/html")
+    if html:
+        return _html_to_text(html)
+    # Fallback: a body at the root with no explicit part mimeType.
     data = payload.get("body", {}).get("data")
-    return _decode(data) if data else ""
+    if not data:
+        return ""
+    raw = _decode(data)
+    return _html_to_text(raw) if "<" in raw and ">" in raw else raw
 
 
 def sender_email(sender: str) -> str:
