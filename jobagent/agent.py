@@ -99,6 +99,9 @@ _OUTCOME_SIGNALS = (
     "no longer", "interview", "next step", "offer", "assessment",
     "update on your application", "status update", "moving forward",
     "schedule", "shortlisted", "selected",
+    # soft / gently-worded rejections (eval finding 2026-06-08)
+    "profile on file", "suitable match", "other candidates",
+    "not a match", "no longer under consideration", "pursue other",
 )
 
 
