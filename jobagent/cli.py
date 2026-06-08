@@ -204,6 +204,17 @@ def cmd_task(args):
     print("  " + llm.daily_task())
 
 
+def cmd_eval(args):
+    from . import evals
+    if args.live and not _require_gemini():
+        return
+    result = evals.run_evals(live=args.live)
+    print(result["report"])
+    evals.REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    evals.REPORT_PATH.write_text(result["report"] + "\n")
+    print(f"\nReport written to {evals.REPORT_PATH}")
+
+
 def cmd_schedule(args):
     if args.uninstall:
         removed = scheduler.uninstall()
@@ -268,6 +279,11 @@ def build_parser() -> argparse.ArgumentParser:
     dr.add_argument("--max-llm", type=int, default=10, dest="max_llm",
                     help="Max emails to draft with Gemini (default 10)")
     dr.set_defaults(func=cmd_drafts)
+
+    ev = sub.add_parser("eval", help="Run the evaluation suite (accuracy of email extraction)")
+    ev.add_argument("--live", action="store_true",
+                    help="Re-record Gemini outputs (uses quota); default scores cached outputs")
+    ev.set_defaults(func=cmd_eval)
 
     sub.add_parser("summary", help="Weekly dashboard: response rate, interviews, pending").set_defaults(func=cmd_summary)
     sub.add_parser("task", help="One daily skill-learning task for AI/ML testing roles").set_defaults(func=cmd_task)
