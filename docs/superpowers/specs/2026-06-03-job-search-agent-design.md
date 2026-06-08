@@ -1,183 +1,275 @@
-# Job Search Agent — Design Spec
+# Job Application Tracker — Complete Project Guide
 
-**Date:** 2026-06-03
-**Author:** Hiya Arora (with Claude Code)
-**Status:** Approved — ready for implementation planning
+**Project:** job-application-tracker (renamed from "jobsearch-agent")
+**Author:** Hiya Arora (built with Claude Code)
+**Repo:** https://github.com/Hiyaarora/job-application-tracker (public)
+**Created:** 2026-06-03 · **Last updated:** 2026-06-07
+**Status:** Working. All 5 planned features built + extras. 78 tests passing.
 
-## Purpose
+> This is the single "everything you need to know" doc. If someone asks *any*
+> question about the project, the answer should be here, in plain language.
 
-A terminal-only (CLI) AI agent that helps manage a job search. It tracks
-applications in a Google Sheet, reads Gmail to automatically update application
-statuses, drafts professional replies for human approval before sending, and
-shows weekly growth metrics plus a daily AI/ML-testing skill suggestion.
+---
 
-This is a portfolio project demonstrating: Google OAuth, Gmail + Sheets APIs, an
-LLM agent loop, a clean storage abstraction, and human-in-the-loop safety.
+## 1. What is it? (one paragraph)
 
-## Key Decisions (confirmed)
+A **terminal app** that manages the *applications you've already sent*. You connect
+your Gmail once. After that it reads your job-application emails, lists every
+company you applied to in a **Google Sheet**, and **every morning automatically
+updates each application's status** (Applied → Interview → Rejected/Offer) by
+reading new emails — so you never have to dig through your inbox. It can also
+**draft replies** to recruiters (you approve before anything sends) and show a
+**weekly dashboard** plus a **daily skill task**.
 
-- **Interface:** terminal CLI only. No FastAPI, no web UI.
-- **LLM:** Google **Gemini free tier** (`gemini-2.5-flash`), via `GEMINI_API_KEY`
-  from Google AI Studio. NOT Anthropic. Free quota is low (~20 requests/day),
-  so the design must minimize LLM calls.
-- **Build order:** full design now; implement & verify in phases — Auth →
-  Sheets Tracker → Gmail reading → Draft replies → Growth dashboard. Confirm
-  each phase works before moving to the next.
-- **OAuth client type:** "Desktop app" using `InstalledAppFlow.run_local_server()`
-  (opens browser, catches redirect on localhost). Not a web-server redirect flow.
-- **Token storage:** `token.json` encrypted at rest with `cryptography.Fernet`;
-  the Fernet key lives in a separate key file with `0600` permissions. Nothing
-  hardcoded, nothing secret committed to git.
-- **Quota protection:** Gmail sync pre-filters emails in plain Python (match
-  sender domain / company / role keywords against tracked applications) and only
-  spends an LLM call on emails that already look relevant.
+It is **not** a job-*search* tool (it doesn't find jobs for you). It *tracks the
+jobs you applied to* and keeps their status current. That's why it's named
+"job-application-tracker."
 
-## Architecture
+---
 
-Layered CLI. Agent logic never touches Google APIs directly — it goes through
-the `Tracker`, `gmail_client`, and `llm` interfaces. This keeps each module
-single-purpose and the storage backend swappable.
+## 2. The problem it solves
 
-```
-jobsearch-agent/
-├── jobagent/
-│   ├── __init__.py
-│   ├── config.py        # loads .env, paths, constants (scopes, model name)
-│   ├── auth.py          # Google OAuth (InstalledAppFlow), encrypted token store, auto-refresh
-│   ├── tracker.py       # ABSTRACTION: Tracker (ABC) + SheetsTracker impl + Application dataclass
-│   ├── gmail_client.py  # thin Gmail API wrapper: list_recent(), get(), send()
-│   ├── llm.py           # Gemini wrapper: classify_email(), draft_reply(), daily_task()
-│   ├── agent.py         # orchestration: sync_inbox(), propose_drafts(), weekly_summary(), daily_task()
-│   └── cli.py           # CLI commands -> calls agent + tracker
-├── tests/               # pytest, with FakeTracker + mocked Google/Gemini
-├── .env.example
-├── requirements.txt
-├── README.md
-└── main.py              # entry point -> cli.main()
-```
+When you apply to many companies, your inbox fills with confirmations, interview
+invites, and rejections. Keeping a manual tracker is tedious. This agent does it
+for you: one sheet, always up to date, no manual email-checking.
 
-## Storage Abstraction (key requirement)
+---
 
-```python
-@dataclass
-class Application:
-    company: str
-    role: str
-    date_applied: str        # ISO date
-    source: str
-    status: str              # one of STATUSES
-    last_updated: str        # ISO datetime
-    notes: str = ""
+## 3. How it works (the everyday flow)
 
-class Tracker(ABC):
-    def add_application(self, company, role, source, date_applied=None, notes="") -> Application: ...
-    def update_status(self, company, role, status, note=None) -> Application: ...
-    def get_applications(self, since=None, status=None) -> list[Application]: ...
-    def find_application(self, company, role) -> Application | None: ...
-```
+**One-time:** you run `setup`, which connects your Google account (Gmail + Sheets)
+and saves an encrypted login token on your Mac.
 
-`SheetsTracker(Tracker)` implements these against a Google Sheet with columns:
-**Company, Role, Date Applied, Source, Status, Last Updated, Notes**.
+**Every morning at 9 AM (automatic):** a background job (`update`) runs on your
+Mac and:
+1. Searches Gmail for **application emails from the last 7 days** (only recruiting
+   emails — not your whole inbox).
+2. **Skips emails it already read** (remembered in `seen.json`) so it never wastes
+   work.
+3. For each *new* email, the AI reads it and either:
+   - **adds a new company** (with role, date applied, status), or
+   - **moves an existing company's status forward** (e.g. → Rejected).
 
-`STATUSES = ["Applied", "In Review", "Interview Scheduled", "Rejected", "Offer"]`
+**Whenever you want:** open the Google Sheet — it's already current. Or run
+commands yourself (see §5).
 
-To swap to SQLite later: write `SQLiteTracker(Tracker)` and change one wiring
-line. Agent code is untouched. The rest of the code only ever sees `Application`
-objects, never raw spreadsheet rows.
+> **Important nuance:** opening the sheet does **not** trigger a sync. The sheet
+> is just storage; the *morning job writes into it*. By the time you open it,
+> it's already been updated. The job runs on **your Mac**, so your Mac needs to be
+> awake around 9 AM (if it was off, the job runs once when you next wake it, and
+> because it looks back 7 days, nothing is missed).
 
-## Auth & Token Storage
+---
 
-- OAuth client type **Desktop app**. `InstalledAppFlow.run_local_server()` opens
-  the browser for consent and catches the redirect on localhost automatically.
-- Scopes (only what the app uses):
-  `openid`, `email`, `profile`,
-  `https://www.googleapis.com/auth/gmail.readonly`,
-  `https://www.googleapis.com/auth/gmail.send`,
-  `https://www.googleapis.com/auth/spreadsheets`.
-- Tokens encrypted at rest: serialized credentials JSON encrypted with
-  `Fernet`. Fernet key stored at `~/.jobagent/key` (`0600`); encrypted token at
-  `~/.jobagent/token.enc`.
-- Auto-refresh: on load, if expired and a refresh token exists, refresh silently
-  and re-save. If refresh fails, prompt the user to run `login` again.
+## 4. The 5 core features (from the original spec)
 
-## Data Flow — Gmail → Status Update
+1. **Google login (OAuth)** — secure sign-in; tokens encrypted on disk.
+2. **Application tracker (Google Sheet)** — columns: Company, Role, Date Applied,
+   Source, Status, Last Updated, Notes. Behind a swappable storage interface.
+3. **Auto status updates from Gmail** — the AI reads emails and updates statuses.
+4. **AI draft replies** — drafts replies to recruiters; **never sends without your
+   approval**.
+5. **Growth features** — weekly summary (response rate, interviews, pending) + a
+   daily AI/ML-testing skill suggestion.
 
-1. `gmail_client.list_recent(max=N)` pulls recent messages (headers + snippet).
-2. **Cheap Python pre-filter:** keep only emails whose sender domain or
-   subject/snippet matches a tracked company/role. Protects the Gemini quota.
-3. For each surviving email → `llm.classify_email()` returns
-   `{matched_company, matched_role, intent, new_status, confidence}`.
-   Intents: confirmation, rejection, interview_invite, recruiter_followup, other.
-4. If confidence is high and a matching application is found,
-   `tracker.update_status()` updates Status + Last Updated. Every change is
-   printed and appended to `~/.jobagent/changes.log`.
+Plus extras we added: a guided **setup wizard**, **auto-discovery** of applications
+from the inbox, a **daily scheduler**, and **self-healing** of rows.
 
-## AI Draft Replies (human-in-the-loop)
+---
 
-- `agent.propose_drafts()` finds emails needing a reply (interview_invite /
-  recruiter_followup), calls `llm.draft_reply()` with the email content.
-- The draft is printed to the terminal. The user chooses: **approve / edit / skip**.
-- Only on explicit approval does `gmail_client.send()` send it. **Never auto-sends.**
+## 5. Commands (cheat sheet)
 
-## Growth Feature
+Run from the project folder after `source .venv/bin/activate`:
 
-- `agent.weekly_summary()` reads only from the Sheet: counts of applied /
-  responses / interviews, response rate, follow-ups pending — printed as a small
-  terminal dashboard. No LLM call.
-- `agent.daily_task()` asks Gemini for one skill-learning task relevant to AI/ML
-  testing roles. One LLM call per invocation.
+| Command | What it does | Uses AI? |
+|---|---|---|
+| `python main.py setup` | Guided first-time Google setup (opens the pages) | no |
+| `python main.py login` | Re-authenticate with Google | no |
+| `python main.py add --company X --role Y --source LinkedIn` | Add an application by hand | no |
+| `python main.py list [--since 7d] [--status Rejected]` | Show tracked applications | no |
+| `python main.py update` | The daily job: find new + update statuses | yes |
+| `python main.py discover [--company "X"] [--refresh]` | Find applications; heal one company; re-scan seen mail | yes |
+| `python main.py drafts` | Draft replies to recruiters (you approve/edit/skip) | yes |
+| `python main.py summary` | Weekly dashboard | no |
+| `python main.py task` | A daily skill-learning suggestion | yes |
+| `python main.py schedule [--at 09:00] [--uninstall]` | Install/remove the daily auto-run | no |
 
-## CLI Commands
+The two you'll use most: **`summary`** (how am I doing?) and **`update`** (refresh now).
+
+---
+
+## 6. Architecture (how the code is organized)
+
+Layered, so each file has one job and the storage backend is swappable:
 
 ```
-jobagent login                          # run OAuth, store encrypted token
-jobagent add  --company --role --source [--date] [--notes]
-jobagent list [--since 30d] [--status Interview]
-jobagent sync [--max 25]                # Gmail -> classify -> update Sheet
-jobagent drafts                         # review & approve replies
-jobagent summary                        # weekly dashboard
-jobagent task                           # daily learning suggestion
+jobagent/
+├── config.py        # .env loading, OAuth scopes, constants, Gmail search queries
+├── auth.py          # Google OAuth + Fernet-encrypted token storage
+├── tracker.py       # Tracker (interface) + SheetsTracker (Google Sheets backend)
+├── gmail_client.py  # read/parse/send Gmail; HTML-to-text; dates
+├── llm.py           # Gemini: classify, extract, draft, daily task (+ retry/backoff)
+├── agent.py         # orchestration: discover, sync, drafts, weekly summary, self-heal
+├── scheduler.py     # installs the macOS daily job (launchd)
+├── setup.py         # guided first-run wizard
+└── cli.py           # the command-line interface
 ```
 
-(Invoked as `python main.py <command> ...` during development.)
+**Key design idea — the storage abstraction:** agent logic never talks to Google
+Sheets directly. It goes through a `Tracker` interface. Today the implementation
+is `SheetsTracker` (Google Sheets); you could write `SQLiteTracker` and switch the
+whole app to a local database by changing one line — no other code changes. This
+is the "clean architecture" point that makes the project portfolio-worthy.
 
-## Error Handling
+**Data flow (discover/update):** Gmail search → cheap Python filters (skip
+noise/seen, prioritize informative emails) → AI reads each new email → merge per
+company → write to the sheet.
 
-- Missing/empty `SPREADSHEET_ID` → auto-create the sheet (Sheets API
-  `spreadsheets.create`, allowed by the `spreadsheets` scope), print the new ID,
-  tell the user to paste it into `.env`.
-- Expired token → silent refresh; if refresh fails → prompt to re-`login`.
-- Gemini quota/rate errors → caught, logged, sync continues (that email just is
-  not auto-classified this run).
-- Missing `GEMINI_API_KEY` → LLM features print a friendly "set your key"
-  message; tracker and Gmail features still work.
+---
 
-## Testing
+## 7. How the AI is used (and how little)
 
-- `pytest` with a `FakeTracker` (in-memory implementing `Tracker`) and mocked
-  Google/Gemini clients — logic tested without network or quota.
-- Phase 1 ships with tests for: the Tracker abstraction contract (against
-  FakeTracker), date `--since` parsing, and token encrypt/decrypt round-trip.
+The AI (Google Gemini) is used **only** to read an email and pull out: is this a
+real job application, which company, what role, and what status. Everything else
+(searching Gmail, writing the sheet, deciding what changed) is plain Python — no
+AI, no cost.
 
-## Configuration (.env)
+To respect the tiny free quota (see §9), the agent is deliberately frugal:
+- **Gmail filters first** — only real application emails reach the AI.
+- **One AI read per email, ever** (`seen.json`) — daily runs are nearly free.
+- **OTP/verification emails skipped** before any AI call.
+- **Informative emails read first** — outcome emails (rejection/interview/offer)
+  carry the role *and* the real status, so the agent gets it right within budget.
 
-```
-GOOGLE_CLIENT_SECRETS_FILE=client_secret.json   # downloaded from Google Cloud
-SPREADSHEET_ID=                                  # blank on first run -> auto-created
-GEMINI_API_KEY=                                  # from Google AI Studio
-GEMINI_MODEL=gemini-2.5-flash
-```
+---
 
-`.env`, `client_secret.json`, `token.enc`, and the Fernet key are all
-gitignored.
+## 8. Key decisions & the discussions behind them
 
-## Implementation Phases
+- **Terminal CLI, not a web app.** Simpler, faster to build, easy to learn from.
+  (We dropped FastAPI from the original spec on purpose.)
+- **Gemini free tier, not Anthropic.** To avoid cost for a portfolio project. The
+  trade-off is a small daily quota (see §9).
+- **One row per company.** A company's many emails (confirmation, OTP, rejection)
+  collapse into a single application. Discussed because keying on company+role
+  created duplicate rows (e.g. an OTP email with no role vs. a rejection with the
+  role). Trade-off: if you genuinely applied to *two roles at one company*, they'd
+  merge — rare for most job seekers.
+- **Status only moves forward.** Applied → In Review → Interview Scheduled →
+  Rejected/Offer. A stray/old email can never *downgrade* a status. This fixed a
+  real bug where sync could move a "Rejected" row back to "In Review."
+- **Date Applied = the email's real date** (earliest email from that company), not
+  the date we discovered it. Fixed after dates showed the discovery day.
+- **Strip HTML to text before the AI reads it.** Many recruiting emails are
+  HTML-only; feeding raw HTML buried the role/status (this is exactly why Deutsche
+  Bank's rejection was misread). Now the AI sees clean text.
+- **Skip course/bootcamp/event "applications."** The AI was told to reject things
+  like edtech course signups (Coding Ninjas / careercamp) that say "application"
+  but aren't jobs — they were creating false rows.
+- **`seen.json` + targeted `--company` / `--refresh`.** The daily job skips
+  already-read emails (efficiency). To re-read and self-heal an old row, use
+  `discover --company "X"` (cheap, re-scans just that company) or `--refresh`.
+- **Self-healing.** When a clearer email arrives later, the agent fills a missing
+  role and advances status on its own.
+- **Renamed** from "jobsearch-agent" to "job-application-tracker" — it tracks
+  applied jobs, it doesn't search for jobs.
+- **Commits are authored as Hiya Arora only** (no AI co-author), per preference.
 
-1. **Auth** — `login` works, encrypted token stored, refresh works.
-2. **Sheets Tracker** — create sheet, `add`, `list --since/--status`, `find`.
-3. **Gmail reading + classify** — `sync`.
-4. **Draft replies** — `drafts`.
-5. **Growth** — `summary`, `task`.
+---
 
-Each phase verified in terminal/browser before the next begins (per user
-instruction: do not commit a phase until verified).
+## 9. The most important limitation: the Gemini free quota
+
+The free tier of `gemini-2.5-flash` allows roughly:
+- **~5 AI reads per minute**, and
+- **20 AI reads per day** (the API literally reports `quota_value: 20`).
+
+**What this means in practice:**
+- The agent can read at most ~15–20 application emails per day. If you applied to
+  many places, the first backfill completes over **1–2 days** (the daily job picks
+  up where it left off, thanks to `seen.json`).
+- When the daily limit is hit, the agent stops cleanly and continues the next day.
+- The quota **resets daily at midnight US Pacific Time (~1:30 PM IST)**.
+
+This is the single biggest constraint and explains most "why isn't X updated yet?"
+questions. It's not a bug — it's the free tier. (Options to lift it: switch to a
+lighter model like `gemini-2.5-flash-lite` with higher free limits, or enable
+pay-as-you-go billing — fractions of a cent per read.)
+
+---
+
+## 10. Where data & secrets live
+
+| Path | Contents |
+|---|---|
+| Google Sheet "Job Search Tracker" | your tracked applications (the real data) |
+| `~/.jobagent/key`, `token.enc` | encrypted Google login (private) |
+| `~/.jobagent/seen.json` | ids of emails already read by discover/update |
+| `~/.jobagent/drafts_seen.json` | emails already considered for a reply |
+| `~/.jobagent/changes.log` | log of every status change |
+| `~/.jobagent/daily.log` | output of the 9 AM scheduled job |
+| project `.env` | your keys + spreadsheet id (gitignored) |
+| project `client_secret.json` | Google OAuth credentials (gitignored) |
+
+Nothing secret is ever committed to GitHub.
+
+---
+
+## 11. FAQ (real questions, plain answers)
+
+**Q: How do I run it?**
+For tracking, you don't — the 9 AM job runs itself. To run manually: `cd` into the
+project, `source .venv/bin/activate`, then `python main.py <command>` (see §5).
+
+**Q: Does the sheet update when I open it?**
+No. The 9 AM job updates it beforehand; opening it just shows the latest data.
+
+**Q: What if my Mac is off at 9 AM?**
+The job runs once the next time your Mac is awake, and it looks back 7 days, so
+nothing is missed (as long as you open your Mac at least once a week).
+
+**Q: Why are only some companies listed / not all at once?**
+Each company needs an AI read, and the free tier allows ~20/day. So a big backlog
+fills in over 1–2 days. (As of last check, 29 of 30 recent emails were processed →
+22 companies.)
+
+**Q: Why does a company show role "(unknown)"?**
+Because that company's email didn't state a role (e.g. generic "we received your
+application" from Tower Research / HPE, or a third-party marketing email like
+CoRover's). The agent won't invent a role. You can type it in, or a later email
+that names the role will let the agent fill it automatically.
+
+**Q: A rejection came days ago — why is the status still "Applied"?**
+That email was already read once (and marked `seen`), so the daily job skips it.
+If it was read while a bug was active (e.g. the HTML issue), the status got stuck.
+Fix: re-scan that one company — `python main.py discover --company "X"` — which
+re-reads it with the current code. (Needs a fresh daily quota.)
+
+**Q: Will it send emails on its own?**
+Never. Replies are only sent after you explicitly approve them in `drafts`.
+
+**Q: How much does it cost?**
+Nothing — it uses Google's free APIs and the free Gemini tier.
+
+---
+
+## 12. Glossary
+
+- **OAuth** — the secure "Sign in with Google" flow; lets the app act for you
+  without your password.
+- **ATS** — Applicant Tracking System (Greenhouse, Lever, Workday, Ashby…). Most
+  application emails come from these, which is how we find them precisely.
+- **Gemini** — Google's AI model; reads each email and extracts the details.
+- **launchd** — macOS's built-in scheduler; runs the 9 AM job.
+- **Quota** — the daily limit on AI reads (≈20/day on the free tier).
+- **`seen.json`** — the agent's memory of which emails it already read.
+
+---
+
+## 13. Status & what's left
+
+- ✅ All 5 spec features built; 78 automated tests passing; pushed to GitHub.
+- ✅ Daily auto-run installed; backfilled to 22 companies with correct dates/roles.
+- ⏳ One leftover: Deutsche Bank status → Rejected (read during an earlier bug; a
+  one-line `discover --company "Deutsche Bank"` fixes it once quota resets).
+- 💡 Optional future ideas: an `edit` command to correct any field by hand; a
+  truly always-on version via Google Apps Script (runs on Google's servers, even
+  with your Mac off); higher AI quota via flash-lite or billing.

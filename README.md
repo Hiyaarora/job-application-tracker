@@ -219,6 +219,33 @@ run instantly with **no network calls and no API quota**.
 
 ---
 
+## Evaluation (measuring the AI's accuracy)
+
+The agent's core AI task — reading an email and extracting `company`, `role`, and
+`status` — is graded by an **evaluation suite** (think "QA for the AI"). A labeled
+set of ~22 synthetic emails (`evals/dataset.jsonl`) covers every case the agent
+must handle: confirmations, rejections (incl. HTML-only), interviews, offers,
+OTP/noise, course-spam, no-role confirmations, and job alerts.
+
+```bash
+python main.py eval          # score cached model outputs (free, offline)
+python main.py eval --live   # re-run the AI and refresh the cache (uses quota)
+```
+
+It reports two layers and writes `evals/report.md`:
+- **Deterministic filters** (free, no AI): are noise/OTP emails skipped, are job
+  emails kept, are outcome emails prioritized.
+- **LLM extraction**: `is_job_application` precision/recall, company & role match,
+  and **status accuracy with a confusion matrix** (e.g. how often a "Rejected" is
+  misread as "Applied").
+
+To keep within the free Gemini quota, model outputs are **cached** in
+`evals/cache/` (committed), so normal eval runs are free and deterministic;
+`--live` re-records when a prompt changes. This is how prompt changes are checked
+for regressions before they reach your sheet.
+
+---
+
 ## Privacy & safety
 
 - Your emails and application data stay in **your** Google account.
